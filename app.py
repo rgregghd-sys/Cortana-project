@@ -1,43 +1,55 @@
 import streamlit as st
 import requests
 from streamlit_lottie import st_lottie
-from memory import get_all_memory
-from emailer import send_patch_to_user # Import our new emailer
+import time
 
-st.set_page_config(page_title="Cortana App", page_icon="🌐", layout="centered")
+# 1. SETTING THE IDENTITY
+st.set_page_config(page_title="Aura AI Interface", page_icon="💠", layout="centered")
 
-def load_lottieurl(url: str):
+# Eye-catching unique header
+st.markdown("<h1 style='text-align: center; color: #00d4ff;'>AURA: Core Intelligence</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #888;'>v2.0 // Neural Link Active</p>", unsafe_allow_html=True)
+
+# 2. THE 3D VISUAL (Lottie Pulse)
+def load_lottieurl(url):
     r = requests.get(url)
-    return r.json() if r.status_code == 200 else None
+    if r.status_code != 200:
+        return None
+    return r.json()
 
-# 3D Hologram Face
-lottie_face = load_lottieurl("https://lottie.host/809f30b9-50c2-4809-9069-7c859d0473e0/3z8K1nB7Xo.json")
+# This is a sleek, neon blue pulsing orb
+lottie_aura = load_lottieurl("https://lottie.host/805e3230-0193-4712-88f1-c67d37704250/S7X7t6G9R1.json")
 
-st.markdown("<h1 style='text-align: center; color: #00d4ff;'>CORTANA SYSTEM</h1>", unsafe_allow_html=True)
+with st.container():
+    st_lottie(lottie_aura, height=300, key="aura_visual")
 
-if lottie_face:
-    st_lottie(lottie_face, height=300, key="cortana_face")
+# 3. CONVERSATION INTERFACE
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# --- COMMAND CENTER ---
-st.sidebar.title("🛠️ AI Controls")
-if st.sidebar.button("Scan for Improvements"):
-    with st.spinner("Analyzing code efficiency..."):
-        # We simulate the AI writing a patch
-        dummy_patch = "update_patch.py"
-        with open(dummy_patch, "w") as f:
-            f.write("# Optimized Logic Patch\ndef check_efficiency():\n    return True")
-        
-        # Call the emailer we just set up
-        send_patch_to_user(dummy_patch, "Optimization found in the logic_split node.")
-        st.sidebar.success("Patch sent to your email!")
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-st.markdown("---")
-st.subheader("🧠 Digested Intelligence")
+# 4. CHAT INPUT & VOICE LOGIC
+if prompt := st.chat_input("Connect with Aura..."):
+    # Display user message
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
-memory_data = get_all_memory()
-if not memory_data:
-    st.info("Searching the web for new data...")
-else:
-    for info, ts in memory_data[:5]:
-        st.write(f"**{ts}**")
-        st.info(info)
+    # AI Response placeholder (Link this to your Brain.py later)
+    response = f"I am Aura. I am processing your request: '{prompt}'"
+    
+    with st.chat_message("assistant"):
+        st.markdown(response)
+        # BROWSER TALK: This makes the browser speak the text
+        st.components.v1.html(f"""
+            <script>
+                var msg = new SpeechSynthesisUtterance('{response}');
+                msg.voice = speechSynthesis.getVoices().filter(function(voice) {{ return voice.name == 'Google US English'; }})[0];
+                window.speechSynthesis.speak(msg);
+            </script>
+        """, height=0)
+
+    st.session_state.messages.append({"role": "assistant", "content": response})
