@@ -1,18 +1,21 @@
 import sqlite3
 
-def save_to_memory(data_list):
-    conn = sqlite3.connect('cortana_memory.db')
-    cursor = conn.cursor()
-    cursor.execute('CREATE TABLE IF NOT EXISTS knowledge (info TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
-    for info in data_list:
-        cursor.execute('INSERT INTO knowledge (info) VALUES (?)', (info,))
-    conn.commit()
-    conn.close()
-
 def get_all_memory():
-    conn = sqlite3.connect('cortana_memory.db')
+    conn = sqlite3.connect('aura_memory.db')
     cursor = conn.cursor()
+    
+    # NEW: Create the table if it's missing so the app doesn't crash
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            info TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    
+    # Now try to select the data
     cursor.execute('SELECT info, timestamp FROM knowledge ORDER BY timestamp DESC')
-    rows = cursor.fetchall()
+    data = cursor.fetchall()
     conn.close()
-    return rows
+    return data
