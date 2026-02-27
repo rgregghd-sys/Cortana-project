@@ -1,7 +1,8 @@
 import smtplib
 from email.message import EmailMessage
 
-def send_email(subject, receiver, body, sender_email, sender_password):
+# This name must match exactly what app.py expects
+def send_patch_to_user(subject, receiver, body, sender_email, sender_password):
     msg = EmailMessage()
     msg.set_content(body)
     msg['Subject'] = subject
