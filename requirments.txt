@@ -1,0 +1,4 @@
+langgraph
+streamlit
+requests
+streamlit-lottie
