@@ -96,12 +96,14 @@ def _build_bone_defs(lo, hi):
     neck_b   = pt(0.60);  neck_t   = pt(0.73)
     head_t   = pt(1.00)
 
-    # Shoulders (branch from Spine2)
-    s_base  = pt(0.55, 0.0)
-    ls_tip  = pt(0.55, -half_w * 0.70)   # left → negative wide axis
-    rs_tip  = pt(0.55,  half_w * 0.70)
-    la_tip  = pt(0.30, -half_w * 0.90)
-    ra_tip  = pt(0.30,  half_w * 0.90)
+    # Shoulders — head sits AT the shoulder geometry height (normalized 0.60),
+    # tail angles DOWN ~22° below horizontal for a natural resting posture.
+    # Without this, bones that are perfectly horizontal produce a T-pose bind.
+    s_base  = pt(0.60, 0.0)               # shoulder head: at actual shoulder height
+    ls_tip  = pt(0.48, -half_w * 0.75)   # shoulder tail: lower + left  (~22° drop)
+    rs_tip  = pt(0.48,  half_w * 0.75)   # shoulder tail: lower + right
+    la_tip  = pt(0.22, -half_w * 0.88)   # arm hangs near bottom (~79° from horiz)
+    ra_tip  = pt(0.22,  half_w * 0.88)
 
     return {
         "Root":          (root_h,   spine_h,   None),
