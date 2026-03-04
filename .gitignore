@@ -1,4 +1,91 @@
+# ── Python ──────────────────────────────────────────────────────────────────
 venv/
-.env
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# ── Environment & secrets ────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+secrets.json
+*_secrets.*
+.evk
+.evk.pub
+
+# ── Databases & vector stores ────────────────────────────────────────────────
 *.db
+*.sqlite
+*.sqlite3
+chroma_db/
+
+# ── Logs & patches ───────────────────────────────────────────────────────────
+*.log
+*.patch
+logs/
+
+# ── Agent workspace (runtime artifacts) ─────────────────────────────────────
+agent_workspace/
+
+# ── Model weights (large binary files) ──────────────────────────────────────
+models/
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# ── 3D / Media ───────────────────────────────────────────────────────────────
+# Keep base + rigged GLB; exclude auto-generated animation clips & test files
+cortana/static/cortana_nod.glb
+cortana/static/cortana_tilt.glb
+cortana/static/test_*.glb
+cortana/static/*_anim.glb
+
+# ── Streamlit ────────────────────────────────────────────────────────────────
+.streamlit/
+
+# ── Large / generated archives ───────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.deb
+
+# ── Cloudflare tunnel ────────────────────────────────────────────────────────
+.cloudflared/
+
+# ── SSH keys (should never be in a repo) ────────────────────────────────────
+id_rsa
+id_rsa.pub
+id_rsa.pub.pub
+*.pem
+*.key
+
+# ── Misc IDE / OS ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Legacy / scratch files in project root ───────────────────────────────────
+aura_vault/
+aura_head.glb
+jarvis_memory.json
+cortana_memory.json
+cortana_brain.json
+cortana_cloud_dump.json
+cortana_ethics.json
+cortana_free_will.py
+jarvis_cortana_cloud.json
+jarvis_cortana_knowledge.json
+knowledge_base.json
+cortana_url.sh
+textures/
