@@ -1117,7 +1117,7 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
   window._visionHandler = (msg) => {
     if (msg.type === 'vision_response') {
       status.textContent = 'Done';
-      addMessage('assistant', '\uD83D\uDC41 ' + msg.text);
+      addMessage('assistant', '[Vision] ' + msg.text);
       if (msg.emotion) setExpression(msg.emotion);
     }
   };
