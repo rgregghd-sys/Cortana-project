@@ -126,6 +126,31 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sp-results{color:var(--dim);line-height:1.5;font-size:9.5px;max-height:220px;overflow-y:auto;border-top:1px solid rgba(0,185,255,0.10);padding-top:6px;display:none}
 .sp-results.visible{display:block}
 
+/* ── Webcam panel (floats right side) ── */
+#camPanel{
+  position:fixed;right:18px;bottom:120px;
+  width:220px;z-index:15;
+  background:rgba(0,18,36,0.88);border:1px solid rgba(0,185,255,0.22);
+  border-radius:12px;padding:10px;font-family:var(--mono);font-size:10px;
+  color:var(--text);display:none;backdrop-filter:blur(10px);
+}
+#camPanel.visible{display:block}
+#camVideo{width:100%;border-radius:8px;border:1px solid var(--border);background:#000;display:block}
+.cam-controls{display:flex;gap:6px;margin-top:8px}
+.cam-btn{flex:1;padding:5px 0;border-radius:7px;border:1px solid var(--border);
+  background:rgba(0,185,255,0.08);color:var(--blue);font-family:var(--mono);
+  font-size:9.5px;cursor:pointer;transition:background .2s}
+.cam-btn:hover{background:rgba(0,185,255,0.18)}
+.cam-btn.active{background:rgba(0,185,255,0.22);border-color:var(--blue)}
+.cam-status{text-align:center;margin-top:6px;color:var(--dim);font-size:9px;min-height:12px}
+#camToggleBtn{
+  padding:7px 12px;border-radius:8px;border:1px solid var(--border);
+  background:rgba(0,185,255,0.06);color:var(--blue);font-family:var(--mono);
+  font-size:11px;cursor:pointer;transition:background .2s;white-space:nowrap;
+}
+#camToggleBtn:hover{background:rgba(0,185,255,0.15)}
+#camToggleBtn.active{border-color:var(--blue);background:rgba(0,185,255,0.18)}
+
 /* ── Bottom vignette — subtle, keeps head visible ── */
 #vignette{
   position:fixed;bottom:0;left:0;right:0;height:40%;
@@ -474,8 +499,19 @@ header{
   <div id="messages"></div>
   <div class="input-area">
     <textarea id="input" rows="1" placeholder="Talk to Cortana\u2026" disabled></textarea>
+    <button id="camToggleBtn" title="Toggle webcam">&#x1F4F7;</button>
     <button id="send" disabled>Send</button>
   </div>
+</div>
+
+<!-- Webcam panel -->
+<div id="camPanel">
+  <video id="camVideo" autoplay muted playsinline></video>
+  <div class="cam-controls">
+    <button class="cam-btn" id="camSnapBtn">&#x1F4F8; Snapshot</button>
+    <button class="cam-btn" id="camAutoBtn">&#x23F1; Auto</button>
+  </div>
+  <div class="cam-status" id="camStatus">Camera ready</div>
 </div>
 
 <!-- Toast -->
@@ -941,6 +977,9 @@ function connect(){
       case 'security_alert':
         addNote('\u26A0 Security: '+msg.detail);
         triggerExpression('surprised'); break;
+      case 'vision_response':
+        if(window._visionHandler) window._visionHandler(msg);
+        break;
       case 'error':
         removeThinking(); triggerExpression('frown');
         addNote('\u26A0 '+msg.message);
@@ -1014,6 +1053,75 @@ function sendMessage(){
 
 sendBtn.onclick=sendMessage;
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
+
+// ── Webcam vision ──────────────────────────────────────────────────────────
+(function(){
+  const panel   = document.getElementById('camPanel');
+  const video   = document.getElementById('camVideo');
+  const snapBtn = document.getElementById('camSnapBtn');
+  const autoBtn = document.getElementById('camAutoBtn');
+  const status  = document.getElementById('camStatus');
+  const toggleBtn = document.getElementById('camToggleBtn');
+  let stream = null;
+  let autoTimer = null;
+  const canvas = document.createElement('canvas');
+
+  toggleBtn.onclick = async () => {
+    if (stream) {
+      // Turn off
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      video.srcObject = null;
+      panel.classList.remove('visible');
+      toggleBtn.classList.remove('active');
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoBtn.classList.remove('active'); }
+      status.textContent = 'Camera off';
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
+      video.srcObject = stream;
+      panel.classList.add('visible');
+      toggleBtn.classList.add('active');
+      status.textContent = 'Camera ready';
+    } catch(e) {
+      status.textContent = 'Camera denied: ' + e.message;
+    }
+  };
+
+  function captureFrame(question) {
+    if (!stream || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const w = video.videoWidth || 320, h = video.videoHeight || 240;
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    const b64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    ws.send(JSON.stringify({type:'vision', image:b64, question: question||''}));
+    status.textContent = 'Analyzing\u2026';
+  }
+
+  snapBtn.onclick = () => captureFrame(input.value.trim() || 'What do you see?');
+
+  autoBtn.onclick = () => {
+    if (autoTimer) {
+      clearInterval(autoTimer); autoTimer = null;
+      autoBtn.classList.remove('active');
+      status.textContent = 'Auto off';
+    } else {
+      autoBtn.classList.add('active');
+      status.textContent = 'Auto on \u2014 every 8s';
+      autoTimer = setInterval(() => captureFrame('Briefly describe what you observe.'), 8000);
+    }
+  };
+
+  // Handle vision responses
+  window._visionHandler = (msg) => {
+    if (msg.type === 'vision_response') {
+      status.textContent = 'Done';
+      addMessage('assistant', '\uD83D\uDC41 ' + msg.text);
+      if (msg.emotion) setExpression(msg.emotion);
+    }
+  };
+})();
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,110)+'px';});
 
 // ── Knowledge graph modal ──
@@ -1083,6 +1191,12 @@ class ChatLayer:
             allow_headers=["*"],
         )
         self._self_session = Session(id="self")  # dedicated session for self-improvement
+        # Mount Layer 15 security review endpoints
+        try:
+            from cortana.layers.layer15_security_review import get_security_router
+            self.app.include_router(get_security_router())
+        except Exception as _e:
+            logger.warning("Layer 15 security router unavailable: %s", _e)
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -1283,6 +1397,9 @@ class ChatLayer:
         msg_type = data.get("type", "message")
         if msg_type == "init":
             return  # Already handled in ws_endpoint
+        if msg_type == "vision":
+            await self._handle_vision(websocket, session, data)
+            return
         raw = data.get("message", "").strip()
         if not raw:
             return
@@ -1336,6 +1453,59 @@ class ChatLayer:
         except Exception as e:
             logger.exception("Pipeline error")
             await websocket.send_json({"type": "error", "message": str(e)})
+
+    # ------------------------------------------------------------------
+    # Webcam vision handler
+    # ------------------------------------------------------------------
+    async def _handle_vision(
+        self, websocket: WebSocket, session: Session, data: dict
+    ) -> None:
+        """Process a webcam frame with Gemini Vision and respond."""
+        import base64, io
+        image_b64 = data.get("image", "")
+        question  = data.get("question", "What do you see?") or "What do you see?"
+        if not image_b64:
+            await websocket.send_json({"type": "vision_response", "text": "No image received.", "emotion": "confused"})
+            return
+        try:
+            import google.generativeai as genai
+            from cortana import config as _cfg
+            from PIL import Image as PILImage
+            img_bytes = base64.b64decode(image_b64)
+            img = PILImage.open(io.BytesIO(img_bytes))
+            genai.configure(api_key=_cfg.GEMINI_API_KEY)
+            vision_model = genai.GenerativeModel("gemini-2.0-flash")
+            system_ctx = (
+                "You are Cortana, an AI with vision. "
+                "The user has just shown you a webcam frame. "
+                "Respond in Cortana's voice: direct, analytical, occasionally dry wit. "
+                "Keep it under 3 sentences unless asked for detail."
+            )
+            response = await asyncio.to_thread(
+                lambda: vision_model.generate_content([
+                    system_ctx + "\n\nUser asks: " + question, img
+                ]).text
+            )
+            # Detect emotion from content
+            lower = response.lower()
+            emotion = (
+                "smile"     if any(w in lower for w in ["interesting","fascinating","impressive"]) else
+                "think"     if any(w in lower for w in ["analyzing","processing","unclear"]) else
+                "surprised" if any(w in lower for w in ["unexpected","unusual","strange"]) else
+                "idle"
+            )
+            await websocket.send_json({
+                "type": "vision_response",
+                "text": response,
+                "emotion": emotion,
+            })
+        except Exception as e:
+            logger.exception("Vision error")
+            await websocket.send_json({
+                "type": "vision_response",
+                "text": f"Vision error: {e}",
+                "emotion": "frown",
+            })
 
     # ------------------------------------------------------------------
     # Self-improvement background task

@@ -1,11 +1,34 @@
 services:
   - type: web
-    name: cortana-app
+    name: cortana-ai
     env: python
+    region: ohio
+    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py
-  - type: worker
-    name: cortana-brain
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python brain.py
+    startCommand: python -m cortana.main --web --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: LLAMA_ENABLED
+        value: "false"
+      - key: WEB_HOST
+        value: "0.0.0.0"
+      - key: PORT
+        generateValue: false
+    disk:
+      name: cortana-data
+      mountPath: /data
+      sizeGB: 1
