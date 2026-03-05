@@ -454,6 +454,193 @@ async def read_emails(limit: int = 10, folder: str = "INBOX") -> str:
 # SMS — Twilio
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 3D Self-Design — Cortana redesigns her own GLB model
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# DevAI — autonomous code improvement integration
+# ---------------------------------------------------------------------------
+
+_DEVAI_ROOT = Path.home() / "DevAI"
+_DEVAI_DB   = Path.home() / ".devai" / "devai.db"
+_DEVAI_RESPONSE_PIPE = "/tmp/devai-response.pipe"
+
+
+def devai_status() -> str:
+    """Show pending DevAI proposals and overall stats from its SQLite database."""
+    if not _DEVAI_DB.exists():
+        return "DevAI database not found. Is DevAI installed?"
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(_DEVAI_DB))
+        conn.row_factory = sqlite3.Row
+
+        stats = conn.execute(
+            """SELECT COUNT(*) as total,
+               SUM(status='applied') as applied,
+               SUM(status='pending') as pending,
+               SUM(status='rejected') as rejected
+               FROM proposals"""
+        ).fetchone()
+
+        pending = conn.execute(
+            """SELECT id, file_path, type, severity, summary
+               FROM proposals WHERE status='pending'
+               ORDER BY created_at DESC LIMIT 10"""
+        ).fetchall()
+        conn.close()
+
+        lines = [
+            f"DevAI Stats — total: {stats['total']} | "
+            f"applied: {stats['applied']} | pending: {stats['pending']} | "
+            f"rejected: {stats['rejected']}",
+        ]
+        if pending:
+            lines.append("\nPending proposals:")
+            for row in pending:
+                short = row['file_path'].replace(str(Path.home()), '~')
+                lines.append(f"  #{row['id']} [{row['severity'].upper()}] {row['type']}: {row['summary']} — {short}")
+            lines.append("\nType 'approve #ID' or 'reject #ID' to decide.")
+        else:
+            lines.append("No pending proposals.")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"DevAI status error: {exc}"
+
+
+def devai_history(limit: int = 10) -> str:
+    """Show recent DevAI proposal history (applied/rejected)."""
+    if not _DEVAI_DB.exists():
+        return "DevAI database not found."
+    try:
+        import sqlite3, datetime
+        conn = sqlite3.connect(str(_DEVAI_DB))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT id, file_path, type, severity, summary, status, created_at
+               FROM proposals ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        if not rows:
+            return "No DevAI proposals in history yet."
+        lines = [f"DevAI History (last {limit}):"]
+        for row in rows:
+            ts = datetime.datetime.fromtimestamp(row['created_at']).strftime('%m/%d %H:%M')
+            short = row['file_path'].replace(str(Path.home()), '~')
+            lines.append(f"  #{row['id']} [{row['status'].upper()}] {row['type']}: {row['summary']} — {short} ({ts})")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"DevAI history error: {exc}"
+
+
+async def devai_scan(path: str = "") -> str:
+    """Trigger an immediate DevAI code-improvement scan. Optionally pass a specific path."""
+    if (err := _check_lockdown()):
+        return err
+    if not _DEVAI_ROOT.exists():
+        return "DevAI not found at ~/DevAI."
+    venv_py = _DEVAI_ROOT / "venv" / "bin" / "python3"
+    if not venv_py.exists():
+        venv_py = Path(sys.executable)  # fallback to current python
+
+    env = os.environ.copy()
+    if path:
+        env["WATCH_PATH"] = path
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            str(venv_py), "-m", "agent.main", "--once",
+            cwd=str(_DEVAI_ROOT),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        out = (stdout.decode()[-800:] if stdout else "") + (stderr.decode()[-400:] if stderr else "")
+        if proc.returncode == 0:
+            return f"DevAI scan complete.\n{out.strip()}" if out.strip() else "DevAI scan complete — no changes detected."
+        return f"DevAI scan exited with code {proc.returncode}:\n{out.strip()}"
+    except asyncio.TimeoutError:
+        return "DevAI scan timed out (>180s). Large codebase — try scanning a specific directory."
+    except Exception as exc:
+        return f"DevAI scan error: {exc}"
+
+
+def devai_approve(proposal_id: int) -> str:
+    """Approve a DevAI proposal by writing 'y' to its response pipe."""
+    try:
+        import stat as _stat
+        p = Path(_DEVAI_RESPONSE_PIPE)
+        if not p.exists() or not _stat.S_ISFIFO(p.stat().st_mode):
+            # If no pipe reader is waiting, update the DB directly
+            import sqlite3
+            conn = sqlite3.connect(str(_DEVAI_DB))
+            row = conn.execute(
+                "SELECT status FROM proposals WHERE id=?", (proposal_id,)
+            ).fetchone()
+            if not row:
+                conn.close()
+                return f"Proposal #{proposal_id} not found."
+            if row[0] != "pending":
+                conn.close()
+                return f"Proposal #{proposal_id} is already {row[0]}."
+            conn.execute(
+                "UPDATE proposals SET status='approved', decided_at=strftime('%s','now') WHERE id=?",
+                (proposal_id,),
+            )
+            conn.commit()
+            conn.close()
+            return f"Proposal #{proposal_id} marked approved. DevAI will apply it on the next scan cycle."
+        fd = os.open(_DEVAI_RESPONSE_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, b"y\n")
+        os.close(fd)
+        return f"Sent approval for proposal #{proposal_id}."
+    except Exception as exc:
+        return f"Approve error: {exc}"
+
+
+def devai_reject(proposal_id: int) -> str:
+    """Reject a DevAI proposal."""
+    try:
+        import stat as _stat, sqlite3
+        p = Path(_DEVAI_RESPONSE_PIPE)
+        if p.exists() and _stat.S_ISFIFO(p.stat().st_mode):
+            try:
+                fd = os.open(_DEVAI_RESPONSE_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+                os.write(fd, b"n\n")
+                os.close(fd)
+            except OSError:
+                pass
+        conn = sqlite3.connect(str(_DEVAI_DB))
+        conn.execute(
+            "UPDATE proposals SET status='rejected', decided_at=strftime('%s','now') WHERE id=? AND status='pending'",
+            (proposal_id,),
+        )
+        conn.commit()
+        conn.close()
+        return f"Proposal #{proposal_id} rejected."
+    except Exception as exc:
+        return f"Reject error: {exc}"
+
+
+async def design_self(description: str = "") -> str:
+    """
+    Let Cortana design her own 3D human GLB model.
+    Runs Blender headlessly, saves cortana_self.glb, broadcasts model_update.
+    `description` — natural language appearance description, e.g. 'medium skin, long hair, slim'.
+    """
+    if (err := _check_lockdown()):
+        return err
+    try:
+        from cortana.tools.model_designer import design_self as _do_design
+        return await _do_design(description=description)
+    except Exception as exc:
+        log.error("[design_self] %s", exc)
+        return f"3D design error: {exc}"
+
+
 async def send_sms(to: str, message: str) -> str:
     """Send an SMS text message via Twilio."""
     if (err := _check_lockdown()):

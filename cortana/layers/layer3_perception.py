@@ -39,6 +39,20 @@ _CREATIVE_KEYWORDS = {
     "story", "poem", "creative", "imagine", "draft", "compose",
     "brainstorm", "invent", "generate",
 }
+_SELF_DESIGN_KEYWORDS = {
+    "redesign yourself", "design yourself", "change your appearance",
+    "update your model", "create your model", "rebuild yourself",
+    "new look", "change your look", "design your body", "make yourself",
+    "design a new model", "design yourself", "change your 3d",
+    "update your 3d", "new 3d model",
+}
+_DEVAI_KEYWORDS = {
+    "devai", "dev ai", "scan my code", "scan code", "review my code",
+    "code review", "code improvements", "improve my code", "check my code",
+    "code analysis", "any bugs", "code quality", "approve #", "reject #",
+    "devai status", "devai history", "devai scan", "pending proposals",
+    "code suggestions", "code issues",
+}
 
 
 class PerceptionLayer:
@@ -79,6 +93,16 @@ class PerceptionLayer:
     def _classify_intent(self, content: str) -> str:
         lower = content.lower()
         words = set(re.findall(r"\b\w+\b", lower))
+
+        # Self-design: check multi-word phrases first (highest priority)
+        for phrase in _SELF_DESIGN_KEYWORDS:
+            if phrase in lower:
+                return "self_design"
+
+        # DevAI: code review / improvement requests
+        for phrase in _DEVAI_KEYWORDS:
+            if phrase in lower:
+                return "devai"
 
         # Short messages (≤ 10 words) are conversational unless they clearly aren't
         if len(content.split()) <= 10:
@@ -138,6 +162,7 @@ class PerceptionLayer:
             "analysis": 0.2,
             "creative": 0.1,
             "code": 0.2,
+            "self_design": 0.3,
         }
         score += intent_bonus.get(intent, 0.0)
 

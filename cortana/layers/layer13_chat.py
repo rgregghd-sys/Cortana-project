@@ -14,7 +14,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
+import os
 import pathlib
+from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,13 +64,19 @@ class Session:
 class ConnectionManager:
     def __init__(self) -> None:
         self._active: Set[WebSocket] = set()
+        self._admin_sockets: Set[WebSocket] = set()  # admin-only connections
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._active.add(ws)
 
+    def mark_admin(self, ws: WebSocket) -> None:
+        """Flag this socket as belonging to an admin user."""
+        self._admin_sockets.add(ws)
+
     def disconnect(self, ws: WebSocket) -> None:
         self._active.discard(ws)
+        self._admin_sockets.discard(ws)
 
     async def broadcast(self, data: dict) -> None:
         dead = set()
@@ -77,6 +85,18 @@ class ConnectionManager:
                 await ws.send_json(data)
             except Exception:
                 dead.add(ws)
+        self._active -= dead
+        self._admin_sockets -= dead
+
+    async def broadcast_admin(self, data: dict) -> None:
+        """Send data only to connected admin sessions."""
+        dead = set()
+        for ws in self._admin_sockets:
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.add(ws)
+        self._admin_sockets -= dead
         self._active -= dead
 
     @property
@@ -162,6 +182,30 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #camToggleBtn:hover,#screenToggleBtn:hover{background:rgba(0,185,255,0.15)}
 #camToggleBtn.active{border-color:var(--blue);background:rgba(0,185,255,0.18)}
 #screenToggleBtn.active{border-color:rgba(0,255,180,0.8);background:rgba(0,255,180,0.12);color:#00ffb4}
+
+/* ── DevAI proposal cards (admin only) ── */
+.devai-card{
+  background:rgba(255,180,0,0.07);border:1px solid rgba(255,180,0,0.35);
+  border-radius:10px;padding:12px 14px;margin:8px 0;font-family:var(--mono);font-size:11px;
+  animation:fadeIn .4s ease;
+}
+.devai-header{color:#ffb400;font-weight:bold;font-size:12px;margin-bottom:6px;letter-spacing:.5px}
+.devai-body{color:var(--text);line-height:1.55}
+.devai-body code{background:rgba(255,180,0,0.15);border-radius:3px;padding:1px 4px;font-size:10px}
+.devai-body pre.devai-diff{
+  background:rgba(0,0,0,0.45);border:1px solid rgba(255,180,0,0.2);
+  border-radius:6px;padding:8px;margin:6px 0;overflow-x:auto;
+  font-size:9.5px;color:#c8e6c9;white-space:pre;max-height:200px
+}
+.devai-actions{display:flex;gap:8px;margin-top:10px}
+.devai-btn{flex:1;padding:6px 0;border-radius:7px;border:none;font-family:var(--mono);
+  font-size:10px;cursor:pointer;font-weight:bold;transition:opacity .2s}
+.devai-btn.approve{background:rgba(0,200,80,0.25);color:#00c850;border:1px solid rgba(0,200,80,0.4)}
+.devai-btn.approve:hover{background:rgba(0,200,80,0.4)}
+.devai-btn.reject{background:rgba(220,50,50,0.2);color:#ff6060;border:1px solid rgba(220,50,50,0.35)}
+.devai-btn.reject:hover{background:rgba(220,50,50,0.35)}
+.devai-decided{color:var(--dim);font-size:10px;font-style:italic}
+.devai-faded{opacity:.4;transition:opacity 1s}
 
 /* ── Bottom vignette — subtle, keeps head visible ── */
 #vignette{
@@ -1201,6 +1245,24 @@ const toast      =document.getElementById('toast');
 
 let ws=null,learnTimer=null,toastTimer=null;
 
+async function devaiRespond(id, decision, cardEl) {
+  try {
+    const resp = await fetch(`/api/devai/respond/${id}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json','X-Session-Token':authToken},
+      body: JSON.stringify({decision})
+    });
+    const d = await resp.json();
+    if (d.ok) {
+      const actions = cardEl.querySelector('.devai-actions');
+      if (actions) actions.innerHTML = `<span class="devai-decided">${decision.toUpperCase()}D</span>`;
+      setTimeout(() => cardEl.classList.add('devai-faded'), 1500);
+    } else {
+      showToast('DevAI error: ' + (d.error || 'unknown'));
+    }
+  } catch(e) { showToast('DevAI respond error: ' + e.message); }
+}
+
 function connect(){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}/ws`);
@@ -1285,6 +1347,44 @@ function connect(){
         triggerExpression('smile');
         addNote('\u2728 Cortana updated her 3D appearance.');
         if(msg.message) showToast(msg.message);
+        break;
+      case 'devai_proposal':
+        // Only admin sessions receive this; render as a special card
+        (function(){
+          const box = document.createElement('div');
+          box.className = 'devai-card';
+          box.dataset.id = msg.id;
+          // Convert markdown-ish content to simple HTML
+          const md = (msg.message||'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+                                       .replace(/`([^`]+)`/g,'<code>$1</code>')
+                                       .replace(/```[\s\S]*?```/g, s => {
+                                         const inner = s.replace(/^```[^\n]*\n?/,'').replace(/\n?```$/,'');
+                                         return '<pre class="devai-diff">'+inner.replace(/</g,'&lt;')+'</pre>';
+                                       })
+                                       .replace(/\n/g,'<br>');
+          box.innerHTML = `<div class="devai-header">\u26A1 DevAI Suggestion #${msg.id}</div>`
+                        + `<div class="devai-body">${md}</div>`
+                        + `<div class="devai-actions">`
+                        + `<button class="devai-btn approve" onclick="devaiRespond(${msg.id},'approve',this.parentElement.parentElement)">Approve</button>`
+                        + `<button class="devai-btn reject"  onclick="devaiRespond(${msg.id},'reject', this.parentElement.parentElement)">Reject</button>`
+                        + `</div>`;
+          document.getElementById('messages').appendChild(box);
+          box.scrollIntoView({behavior:'smooth'});
+          triggerExpression('think');
+          showToast('\u26A1 DevAI found a code improvement. See chat.');
+        })();
+        break;
+      case 'devai_decision':
+        // Remove the card and show result
+        (function(){
+          const card = document.querySelector(`.devai-card[data-id="${msg.id}"]`);
+          if(card){
+            card.querySelector('.devai-actions').innerHTML =
+              `<span class="devai-decided">${msg.action.toUpperCase()}</span>`;
+            setTimeout(()=>card.classList.add('devai-faded'), 2000);
+          }
+          addNote(`DevAI #${msg.id} ${msg.action}.`);
+        })();
         break;
       case 'error':
         removeThinking(); triggerExpression('frown');
@@ -1738,6 +1838,132 @@ class ChatLayer:
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 
+        # ── DevAI integration ──────────────────────────────────────────────
+
+        # Pending proposals received from DevAI daemon: {id: proposal_dict}
+        self._devai_proposals: dict = {}
+
+        _DEVAI_TOKEN = os.getenv("DEVAI_INTERNAL_TOKEN", "devai-local-bridge")
+        _DEVAI_RESPONSE_PIPE = "/tmp/devai-response.pipe"
+        _DEVAI_DB = str(Path.home() / ".devai" / "devai.db")
+
+        @app.post("/api/devai/proposal")
+        async def receive_devai_proposal(request: Request):
+            """
+            Called by the DevAI daemon when it finds a code-improvement proposal.
+            Broadcasts a chat-style alert to all admin WebSocket connections.
+            Admin-only: requires the internal DevAI bridge token.
+            """
+            body = await request.json()
+            if body.get("token") != _DEVAI_TOKEN:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+
+            pid   = body.get("id")
+            fpath = body.get("file_path", "unknown")
+            ptype = body.get("type", "improvement")
+            sev   = body.get("severity", "low")
+            summ  = body.get("summary", "")
+            detail = body.get("detail", "")
+            orig  = body.get("original", "")
+            impr  = body.get("improved", "")
+
+            # Store for later retrieval
+            self._devai_proposals[pid] = body
+
+            # Build a readable message for the admin chat
+            short = fpath.replace(str(Path.home()), "~")
+            msg = (
+                f"**[DevAI #{pid}]** `{ptype.upper()}` · severity: `{sev}`\n"
+                f"**File:** `{short}`\n"
+                f"**Summary:** {summ}\n"
+                f"{detail}\n\n"
+                f"```\n# BEFORE\n{orig[:400]}\n\n# AFTER\n{impr[:400]}\n```\n\n"
+                f"Reply **`approve #{pid}`** or **`reject #{pid}`** to decide."
+            )
+
+            await self.manager.broadcast_admin({
+                "type": "devai_proposal",
+                "id": pid,
+                "message": msg,
+            })
+            logger.info("DevAI proposal #%s broadcast to admin sessions.", pid)
+            return {"ok": True}
+
+        @app.get("/api/devai/proposals")
+        async def list_devai_proposals(request: Request):
+            """List pending proposals from DevAI's SQLite DB. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            try:
+                import sqlite3
+                db = _DEVAI_DB
+                if not Path(db).exists():
+                    return {"proposals": []}
+                conn = sqlite3.connect(db)
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT id, file_path, type, severity, summary, status, created_at "
+                    "FROM proposals ORDER BY created_at DESC LIMIT 50"
+                ).fetchall()
+                conn.close()
+                return {"proposals": [dict(r) for r in rows]}
+            except Exception as exc:
+                return JSONResponse(status_code=500, content={"error": str(exc)})
+
+        @app.post("/api/devai/respond/{proposal_id}")
+        async def respond_devai_proposal(proposal_id: int, request: Request):
+            """
+            Admin approves or rejects a DevAI proposal.
+            Body: {"decision": "approve" | "reject"}
+            Writes the decision to DevAI's response pipe and updates the DB.
+            """
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+
+            body = await request.json()
+            decision = body.get("decision", "reject").lower()
+            approve = decision in ("approve", "y", "yes")
+
+            # Write to DevAI's response pipe (DevAI daemon is waiting)
+            try:
+                import stat as _stat
+                p = Path(_DEVAI_RESPONSE_PIPE)
+                if p.exists() and _stat.S_ISFIFO(p.stat().st_mode):
+                    fd = os.open(_DEVAI_RESPONSE_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+                    os.write(fd, b"y\n" if approve else b"n\n")
+                    os.close(fd)
+            except OSError:
+                pass  # pipe may not have a reader if DevAI is between cycles
+
+            # Also update DB directly so status is visible immediately
+            try:
+                import sqlite3, time as _time
+                if Path(_DEVAI_DB).exists():
+                    conn = sqlite3.connect(_DEVAI_DB)
+                    status = "approved" if approve else "rejected"
+                    conn.execute(
+                        "UPDATE proposals SET status=?, decided_at=? WHERE id=? AND status='pending'",
+                        (status, int(_time.time()), proposal_id),
+                    )
+                    conn.commit()
+                    conn.close()
+            except Exception:
+                pass
+
+            self._devai_proposals.pop(proposal_id, None)
+            action = "approved" if approve else "rejected"
+            await self.manager.broadcast_admin({
+                "type": "devai_decision",
+                "id": proposal_id,
+                "action": action,
+                "message": f"[DevAI #{proposal_id}] {action.upper()} by {user['username']}.",
+            })
+            return {"ok": True, "action": action}
+
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
             from cortana import auth as _auth
@@ -1754,6 +1980,9 @@ class ChatLayer:
                     # Validate auth token if provided
                     if token:
                         user_info = _auth.validate_token(token)
+                        # Mark admin sockets so DevAI proposals can be targeted
+                        if user_info and user_info.get("tier") == "admin":
+                            self.manager.mark_admin(websocket)
 
                     if sid:
                         session.session_id = sid

@@ -427,6 +427,38 @@ class CortanaSystem:
             ) if hasattr(self.memory, "save_turn") else None
             return ack, new_state, new_conv, "smile"
 
+        # --- DevAI fast path ---
+        if perceived.intent == "devai":
+            try:
+                from cortana.layers import layer8_tools as _tools
+                import re as _re
+
+                low = raw_input.lower()
+
+                # Approve / reject by ID
+                approve_m = _re.search(r'\bapprove\s+#?(\d+)', low)
+                reject_m  = _re.search(r'\breject\s+#?(\d+)', low)
+                if approve_m:
+                    ack = _tools.devai_approve(int(approve_m.group(1)))
+                elif reject_m:
+                    ack = _tools.devai_reject(int(reject_m.group(1)))
+                elif any(w in low for w in ("scan", "review", "check", "improve", "analyse", "analyze")):
+                    ack = await _tools.devai_scan()
+                elif "history" in low:
+                    ack = _tools.devai_history()
+                else:
+                    ack = _tools.devai_status()
+
+            except Exception as exc:
+                ack = f"DevAI tool error: {exc}"
+
+            new_state = CortanaState(interaction_count=state.interaction_count + 1)
+            new_conv = list(conversation) + [
+                ConversationTurn(role="user", content=raw_input),
+                ConversationTurn(role="assistant", content=ack),
+            ]
+            return ack, new_state, new_conv, "think"
+
         # --- Layer 2: Memory recall ---
         memories: List[str] = self._safe_call(
             2, "Memory",
