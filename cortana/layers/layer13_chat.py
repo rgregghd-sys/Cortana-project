@@ -1358,10 +1358,10 @@ function connect(){
           const md = (msg.message||'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
                                        .replace(/`([^`]+)`/g,'<code>$1</code>')
                                        .replace(/```[\s\S]*?```/g, s => {
-                                         const inner = s.replace(/^```[^\n]*\n?/,'').replace(/\n?```$/,'');
+                                         const inner = s.replace(/^```[^\\n]*\\n?/,'').replace(/\\n?```$/,'');
                                          return '<pre class="devai-diff">'+inner.replace(/</g,'&lt;')+'</pre>';
                                        })
-                                       .replace(/\n/g,'<br>');
+                                       .replace(/\\n/g,'<br>');
           box.innerHTML = `<div class="devai-header">\u26A1 DevAI Suggestion #${msg.id}</div>`
                         + `<div class="devai-body">${md}</div>`
                         + `<div class="devai-actions">`

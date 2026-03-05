@@ -53,7 +53,7 @@ LLAMA_MODEL_PATH: str     = os.getenv(
     "LLAMA_MODEL_PATH",
     str(_PROJECT_ROOT_EARLY / "models" / "llama-3.2-3b-instruct-q4.gguf"),
 )
-LLAMA_N_CTX: int          = int(os.getenv("LLAMA_N_CTX",     "4096"))
+LLAMA_N_CTX: int          = int(os.getenv("LLAMA_N_CTX",     "131072"))
 LLAMA_N_THREADS: int      = int(os.getenv("LLAMA_N_THREADS",    "6"))   # leave 2 cores spare
 LLAMA_N_BATCH: int        = int(os.getenv("LLAMA_N_BATCH",    "512"))
 LLAMA_TEMPERATURE: float  = float(os.getenv("LLAMA_TEMPERATURE", "0.7"))

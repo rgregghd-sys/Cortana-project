@@ -125,11 +125,24 @@ class CortanaMemory:
                     daily_limit   INTEGER DEFAULT 40,
                     usage_today   INTEGER DEFAULT 0,
                     usage_date    TEXT DEFAULT '',
-                    wallet        TEXT DEFAULT '',
-                    created       DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_login    DATETIME DEFAULT CURRENT_TIMESTAMP
+                    wallet              TEXT DEFAULT '',
+                    created             DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_login          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    password_changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    reset_token         TEXT DEFAULT '',
+                    reset_expires       DATETIME DEFAULT NULL
                 )
             """)
+            # Migrate existing DBs that lack the new password columns
+            for _col, _def in [
+                ("password_changed_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+                ("reset_token",         "TEXT DEFAULT ''"),
+                ("reset_expires",       "DATETIME DEFAULT NULL"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {_col} {_def}")
+                except Exception:
+                    pass  # column already exists
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS web_sessions (
                     token      TEXT PRIMARY KEY,

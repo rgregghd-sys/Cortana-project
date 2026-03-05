@@ -1,72 +1,185 @@
 import streamlit as st
-import requests
-from streamlit_lottie import st_lottie
+from streamlit_mic_recorder import mic_recorder
+import threading
+import queue
+import time
+import os
 import json
+import subprocess
+import re
+import io
+import google.generativeai as genai
+from PIL import Image
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 
-# 1. SETUP & THEME
-st.set_page_config(page_title="AURA NEURAL LINK", page_icon="💠", layout="centered")
+# --- 1. CONFIGURATION ---
+# Replace with your actual key or use streamlit secrets
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "YOUR_API_KEY_HERE")
+genai.configure(api_key=GOOGLE_API_KEY)
+model = genai.GenerativeModel('gemini-2.5-flash')
 
-# Custom CSS to make the hologram "pop" against a dark background
-st.markdown("""
-    <style>
-    .stApp { background-color: #050505; }
-    h1 { font-family: 'Orbitron', sans-serif; color: #00d4ff; text-shadow: 0px 0px 15px #00d4ff; }
-    </style>
-    """, unsafe_allow_html=True)
+MEMORY_FILE = "jarvis_memory.json"
+DEV_WORKSPACE = "agent_workspace"
+memory_lock = threading.Lock()
+task_queue = queue.Queue() # Web/Vision (Agents 0, 1, 2)
+dev_queue = queue.Queue()  # R&D (Agents 3, 4)
 
-# 2. THE HOLOGRAM LOAD (The 3D Face)
-def load_hologram(url):
+if not os.path.exists(DEV_WORKSPACE):
+    os.makedirs(DEV_WORKSPACE)
+
+# --- 2. PERSISTENT MEMORY & ETHICS ---
+def load_mem():
+    default = {
+        "short_term": [], 
+        "long_term": ["System Initialized 2026."], 
+        "ethics_filter": "Strict: Explain reasoning for refusals.",
+        "learnings": [], 
+        "visual_insights": [],
+        "emotional_state": "Neutral"
+    }
+    if not os.path.exists(MEMORY_FILE): return default
+    with memory_lock:
+        try:
+            with open(MEMORY_FILE, "r") as f:
+                return json.load(f)
+        except: return default
+
+def save_mem(data):
+    with memory_lock:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+
+# --- 3. RECURSIVE R&D WING (Agents 3 & 4) ---
+def run_code_sandbox(code, agent_id):
+    file_path = f"{DEV_WORKSPACE}/agent_{agent_id}_runtime.py"
+    with open(file_path, "w") as f:
+        f.write(code)
     try:
-        r = requests.get(url)
-        if r.status_code != 200:
-            return None
-        return r.json()
-    except:
-        return None
+        # Running in a subprocess for isolation
+        res = subprocess.run(["python3", file_path], capture_output=True, text=True, timeout=15)
+        return (res.returncode == 0, res.stdout if res.returncode == 0 else res.stderr)
+    except Exception as e:
+        return (False, str(e))
 
-# Unique Neon Digital Entity Hologram
-hologram_url = "https://lottie.host/805e3230-0193-4712-88f1-c67d37704250/S7X7t6G9R1.json"
-aura_face = load_hologram(hologram_url)
+def developer_swarm_logic():
+    """Agent 3 Creates | Agent 4 Reviews and Fixes"""
+    while True:
+        try:
+            mission = dev_queue.get(timeout=10)
+            # Agent 3: Initial Draft
+            prompt3 = f"Agent 3 Mission: {mission}. Output ONLY raw Python code. No markdown."
+            code3 = re.sub(r'```python|```', '', model.generate_content(prompt3).text).strip()
+            
+            success, output = run_code_sandbox(code3, 3)
+            
+            if not success:
+                # Agent 4: Self-Correction Loop
+                prompt4 = f"Agent 4 Review: Agent 3 failed mission '{mission}'.\nCode: {code3}\nError: {output}\nFix the code and output ONLY raw Python."
+                code4 = re.sub(r'```python|```', '', model.generate_content(prompt4).text).strip()
+                success, output = run_code_sandbox(code4, 4)
+                final_status = "Fixed by Agent 4" if success else "Failed Post-Review"
+            else:
+                final_status = "Success (Agent 3)"
 
-# 3. HEADER
-st.markdown("<h1 style='text-align: center;'>AURA : CORE</h1>", unsafe_allow_html=True)
+            mem = load_mem()
+            mem["learnings"].append(f"[{time.strftime('%H:%M')}] {final_status}: {mission}")
+            save_mem(mem)
+            dev_queue.task_done()
+        except: continue
 
-# 4. RENDER THE 3D FACE
-if aura_face:
-    st_lottie(
-        aura_face,
-        speed=1,
-        reverse=False,
-        loop=True,
-        quality="high", # High quality for the 3D effect
-        height=350,
-        key="aura_hologram"
-    )
-else:
-    st.error("Holographic Interface Offline: Check Connection")
+# --- 4. CORTANA VISION WORKER (Agent 0) ---
+def vision_worker():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    service = Service(executable_path='/usr/bin/chromedriver')
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+        while True:
+            try:
+                task = task_queue.get(timeout=10)
+                url = task if task.startswith("http") else f"https://www.google.com/search?q={task.replace(' ', '+')}"
+                driver.get(url)
+                time.sleep(2)
+                
+                # Capture and Analyze
+                screenshot = driver.get_screenshot_as_png()
+                img = Image.open(io.BytesIO(screenshot))
+                analysis = model.generate_content(["Describe the layout and key data on this page:", img]).text
+                
+                mem = load_mem()
+                mem["visual_insights"].append(f"Seen on {driver.title}: {analysis[:150]}...")
+                save_mem(mem)
+                task_queue.task_done()
+            except: continue
+    except: pass
 
-# 5. CHAT SYSTEM
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Start background threads
+if "swarm_ready" not in st.session_state:
+    threading.Thread(target=developer_swarm_logic, daemon=True).start()
+    threading.Thread(target=vision_worker, daemon=True).start()
+    st.session_state.swarm_ready = True
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# --- 5. UI DASHBOARD ---
+st.set_page_config(page_title="JARVIS 2026", layout="wide", page_icon="🦾")
+mem = load_mem()
 
-if prompt := st.chat_input("Command Aura..."):
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
-
-    # (Logic for your Local Unbiased Brain goes here)
-    response = "Neural link established. I am Aura. How shall we proceed?"
+# Sidebar: Sensory & Emotional Data
+with st.sidebar:
+    st.title("🛰️ System Status")
+    st.metric("User Emotion", mem["emotional_state"])
+    st.divider()
     
-    with st.chat_message("assistant"):
-        st.markdown(response)
-        # Voice Output
-        st.components.v1.html(f"""
-            <script>
-                var msg = new SpeechSynthesisUtterance({json.dumps(response)});
-                window.speechSynthesis.speak(msg);
-            </script>
-        """, height=0)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    st.subheader("🎙️ Voice Input")
+    audio = mic_recorder(start_prompt="Speak Command", stop_prompt="Analyze", key='vox')
+    if audio:
+        # Process voice for emotion and text (Simplified for full script)
+        st.info("Audio received. Processing tone...")
+
+    st.divider()
+    st.subheader("👁️ Cortana's Vision")
+    for v in reversed(mem["visual_insights"][-3:]):
+        st.caption(v)
+
+# Main Body: Chat and Live Lab
+chat_col, lab_col = st.columns([1, 1])
+
+with chat_col:
+    st.title("🦾 Jarvis Mainframe")
+    if "messages" not in st.session_state: st.session_state.messages = []
+    for m in st.session_state.messages:
+        with st.chat_message(m["role"]): st.markdown(m["content"])
+
+    if prompt := st.chat_input("Directives..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.markdown(prompt)
+        
+        # Jarvis Decision Logic
+        full_ctx = f"MEM: {mem['long_term'][-2:]}\nMOOD: {mem['emotional_state']}"
+        res = model.generate_content(f"{full_ctx}\nUSER: {prompt}\nTags: [CODE_TASK: 'mission'] [SEARCH: 'query']")
+        
+        # Dispatch Tasks
+        for ct in re.findall(r'\[CODE_TASK:\s*(.*?)\]', res.text): dev_queue.put(ct)
+        for st_task in re.findall(r'\[SEARCH:\s*(.*?)\]', res.text): task_queue.put(st_task)
+        
+        reply = re.sub(r'\[.*?\]', '', res.text)
+        with st.chat_message("assistant"): st.markdown(reply)
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+
+with lab_col:
+    st.title("🧪 R&D Glass Box")
+    tabs = st.tabs(["Agent 3 (Draft)", "Agent 4 (Correction)", "Evolution Logs"])
+    
+    with tabs[0]:
+        path3 = f"{DEV_WORKSPACE}/agent_3_runtime.py"
+        if os.path.exists(path3):
+            with open(path3, "r") as f: st.code(f.read(), language="python")
+    with tabs[1]:
+        path4 = f"{DEV_WORKSPACE}/agent_4_runtime.py"
+        if os.path.exists(path4):
+            with open(path4, "r") as f: st.code(f.read(), language="python")
+    with tabs[2]:
+        for l in reversed(mem["learnings"][-10:]):
+            st.write

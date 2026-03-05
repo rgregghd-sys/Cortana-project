@@ -108,11 +108,12 @@ def register_user(username: str, password: str, email: str = "") -> Dict[str, An
 
     pw_hash = _hash_password(password)
     free_limit = config.TIERS.get("free", {}).get("daily_limit", 40)
+    now = datetime.utcnow().isoformat()
     try:
         with _db() as conn:
             cur = conn.execute(
-                "INSERT INTO users (username, password_hash, email, daily_limit) VALUES (?,?,?,?)",
-                (username.strip(), pw_hash, email.strip(), free_limit),
+                "INSERT INTO users (username, password_hash, email, daily_limit, password_changed_at) VALUES (?,?,?,?,?)",
+                (username.strip(), pw_hash, email.strip(), free_limit, now),
             )
             conn.commit()
             return {"ok": True, "user_id": cur.lastrowid}
@@ -120,25 +121,40 @@ def register_user(username: str, password: str, email: str = "") -> Dict[str, An
         return {"ok": False, "error": "Username already taken"}
 
 
+_PASSWORD_EXPIRY_DAYS = 45
+
+
 def login_user(username: str, password: str) -> Dict[str, Any]:
     """
     Authenticate a user. Returns session token + user info on success.
+    Includes 'password_expired': True when password is older than 45 days.
     """
     if not username or not password:
         return {"ok": False, "error": "Invalid username or password"}
 
     with _db() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, tier, daily_limit FROM users WHERE username=? COLLATE NOCASE",
+            "SELECT id, password_hash, tier, daily_limit, password_changed_at "
+            "FROM users WHERE username=? COLLATE NOCASE",
             (username.strip(),),
         ).fetchone()
 
     if not row:
         return {"ok": False, "error": "Invalid username or password"}
 
-    user_id, pw_hash, tier, daily_limit = row
+    user_id, pw_hash, tier, daily_limit, pw_changed_at = row
     if not _verify_password(password, pw_hash):
         return {"ok": False, "error": "Invalid username or password"}
+
+    # Check 45-day password expiry (admins are exempt)
+    password_expired = False
+    if tier != "admin":
+        try:
+            changed = datetime.fromisoformat(pw_changed_at) if pw_changed_at else datetime.utcnow()
+            if (datetime.utcnow() - changed).days >= _PASSWORD_EXPIRY_DAYS:
+                password_expired = True
+        except Exception:
+            pass
 
     # Generate session token
     token = secrets.token_urlsafe(48)
@@ -160,7 +176,72 @@ def login_user(username: str, password: str) -> Dict[str, Any]:
         "username": username.strip(),
         "tier": tier,
         "daily_limit": daily_limit,
+        "password_expired": password_expired,
     }
+
+
+def change_password(user_id: int, new_password: str) -> Dict[str, Any]:
+    """Change a user's password and reset the expiry clock."""
+    if len(new_password) < 8:
+        return {"ok": False, "error": "Password must be at least 8 characters"}
+    pw_hash = _hash_password(new_password)
+    now = datetime.utcnow().isoformat()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash=?, password_changed_at=?, reset_token='', reset_expires=NULL WHERE id=?",
+            (pw_hash, now, user_id),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+def request_password_reset(username_or_email: str) -> Dict[str, Any]:
+    """
+    Generate a reset token for the given username or email.
+    Returns the token so the caller can display/email it.
+    Returns ok=False if no matching user found.
+    """
+    val = username_or_email.strip()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE username=? COLLATE NOCASE OR (email=? AND email != '')",
+            (val, val),
+        ).fetchone()
+    if not row:
+        # Don't reveal whether user exists
+        return {"ok": True, "message": "If that account exists, a reset link has been generated."}
+    user_id = row[0]
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.utcnow() + timedelta(hours=2)).isoformat()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE users SET reset_token=?, reset_expires=? WHERE id=?",
+            (token, expires, user_id),
+        )
+        conn.commit()
+    return {"ok": True, "reset_token": token, "message": "Reset token generated. Use it within 2 hours."}
+
+
+def confirm_password_reset(token: str, new_password: str) -> Dict[str, Any]:
+    """Apply a password reset using a valid token."""
+    if not token:
+        return {"ok": False, "error": "Invalid token"}
+    if len(new_password) < 8:
+        return {"ok": False, "error": "Password must be at least 8 characters"}
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id, reset_expires FROM users WHERE reset_token=? AND reset_token != ''",
+            (token,),
+        ).fetchone()
+    if not row:
+        return {"ok": False, "error": "Invalid or expired reset token"}
+    user_id, reset_expires = row
+    try:
+        if datetime.utcnow() > datetime.fromisoformat(reset_expires):
+            return {"ok": False, "error": "Reset token has expired"}
+    except Exception:
+        return {"ok": False, "error": "Invalid reset token"}
+    return change_password(user_id, new_password)
 
 
 def validate_token(token: str) -> Optional[Dict[str, Any]]:

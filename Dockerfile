@@ -16,7 +16,7 @@ COPY cortana/ ./cortana/
 COPY app.py .
 
 # Data directory for SQLite + ChromaDB on persistent volume
-RUN mkdir -p /data
+RUN mkdir -p /data /app/cortana/static
 ENV CORTANA_DATA_DIR=/data
 ENV PYTHONUNBUFFERED=1
 ENV LLAMA_ENABLED=false
