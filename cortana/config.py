@@ -35,12 +35,14 @@ SUB_AGENT_MODEL = "gemini-2.0-flash"
 # Options: llama-3.1-8b-instant | llama-3.3-70b-versatile | mixtral-8x7b-32768 | gemma2-9b-it
 GROQ_MAIN_MODEL = "llama-3.3-70b-versatile"
 GROQ_SUB_MODEL = "llama-3.1-8b-instant"     # faster/cheaper for sub-agent calls
+GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Groq vision model
 
 # OpenRouter — secondary (many free models under one key)
 # Options (free): meta-llama/llama-3.1-8b-instruct:free | mistralai/mistral-7b-instruct:free
 #                 google/gemma-2-9b-it:free  | qwen/qwen-2.5-7b-instruct:free
 OPENROUTER_MAIN_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 OPENROUTER_SUB_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+OPENROUTER_VISION_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"  # OpenRouter free vision
 
 # ---------------------------------------------------------------------------
 # Local Llama (llama-cpp-python) — no API key required
@@ -62,10 +64,13 @@ LLAMA_MAX_TOKENS_SUB: int  = int(os.getenv("LLAMA_MAX_TOKENS_SUB",  "1024"))
 # Memory Paths
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent
-CHROMA_PATH = str(_PROJECT_ROOT / "aura_vault")
-SQLITE_PATH = str(_PROJECT_ROOT / "cortana_memory.db")
-RESEARCH_DB_PATH = str(_PROJECT_ROOT / "aura_prime.db")
-AGENT_WORKSPACE = str(_PROJECT_ROOT / "agent_workspace")
+# CORTANA_DATA_DIR lets cloud deployments (Render, Railway) point to a
+# persistent volume so data survives container restarts.
+_DATA_DIR = Path(os.getenv("CORTANA_DATA_DIR", str(_PROJECT_ROOT)))
+CHROMA_PATH = str(_DATA_DIR / "aura_vault")
+SQLITE_PATH = str(_DATA_DIR / "cortana_memory.db")
+RESEARCH_DB_PATH = str(_DATA_DIR / "aura_prime.db")
+AGENT_WORKSPACE = str(_DATA_DIR / "agent_workspace")
 
 # ---------------------------------------------------------------------------
 # Tool Settings

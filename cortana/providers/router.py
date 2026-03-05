@@ -212,3 +212,35 @@ class ProviderRouter:
                     raise
 
         raise RuntimeError("All providers exhausted without a successful response.")
+
+    def think_vision(
+        self,
+        image_b64: str,
+        question: str,
+        system: str = "",
+        max_tokens: int = 512,
+    ) -> str:
+        """
+        Route a vision request through the first available provider that supports it.
+        Skips providers that raise NotImplementedError; rotates on rate-limit.
+        """
+        candidates = self._available() or [self._wait_for_available()]
+
+        for provider in candidates:
+            try:
+                result = provider.think_vision(image_b64, question, system, max_tokens)
+                if result:
+                    if provider != self._providers[0]:
+                        logger.info(f"[Router] Vision using provider: {provider.name}")
+                    return result
+            except NotImplementedError:
+                continue  # provider doesn't support vision — try next
+            except Exception as e:
+                err = str(e)
+                if _is_rate_limit(err):
+                    logger.warning(f"[Router] {provider.name} vision rate-limited — rotating")
+                    self._mark_cooldown(provider)
+                else:
+                    raise
+
+        raise RuntimeError("No vision-capable provider available or all are rate-limited.")

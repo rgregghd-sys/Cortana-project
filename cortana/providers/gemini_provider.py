@@ -60,6 +60,28 @@ class GeminiProvider(BaseProvider):
         )
         return resp.text
 
+    def think_vision(
+        self,
+        image_b64: str,
+        question: str,
+        system: str = "",
+        max_tokens: int = 512,
+    ) -> str:
+        """Vision call using Gemini's multimodal capability (fallback)."""
+        import base64, io
+        from PIL import Image as PILImage
+        img_bytes = base64.b64decode(image_b64)
+        img = PILImage.open(io.BytesIO(img_bytes))
+        model = genai.GenerativeModel(
+            model_name=config.MAIN_MODEL,
+            system_instruction=system or "You are a helpful AI assistant with vision.",
+        )
+        resp = model.generate_content(
+            contents=[question, img],
+            generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens),
+        )
+        return resp.text
+
     @staticmethod
     def _to_gemini(messages: List[dict]) -> List[dict]:
         role_map = {"user": "user", "assistant": "model", "model": "model"}

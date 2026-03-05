@@ -41,3 +41,17 @@ class BaseProvider(ABC):
         Lightweight single-turn call (no streaming).
         Used by sub-agents, reflection, security layers.
         """
+
+    def think_vision(
+        self,
+        image_b64: str,
+        question: str,
+        system: str = "",
+        max_tokens: int = 512,
+    ) -> str:
+        """
+        Vision call: analyse a base64-encoded image and answer a question about it.
+        Providers that don't support vision leave this as NotImplementedError so
+        the router can skip them.
+        """
+        raise NotImplementedError(f"{self.name} does not support vision")

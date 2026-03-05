@@ -62,6 +62,32 @@ class GroqProvider(BaseProvider):
         )
         return resp.choices[0].message.content or ""
 
+    def think_vision(
+        self,
+        image_b64: str,
+        question: str,
+        system: str = "",
+        max_tokens: int = 512,
+    ) -> str:
+        """Vision call using Groq's vision-capable model."""
+        msgs = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                {"type": "text", "text": question},
+            ],
+        })
+        resp = self._client.chat.completions.create(
+            model=config.GROQ_VISION_MODEL,
+            messages=msgs,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+        return resp.choices[0].message.content or ""
+
     @staticmethod
     def _normalize(messages: List[dict]) -> List[dict]:
         """Normalize Gemini 'model' role → 'assistant' for OpenAI-compatible APIs."""

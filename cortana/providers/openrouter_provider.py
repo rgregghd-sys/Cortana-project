@@ -70,6 +70,33 @@ class OpenRouterProvider(BaseProvider):
         )
         return resp.choices[0].message.content or ""
 
+    def think_vision(
+        self,
+        image_b64: str,
+        question: str,
+        system: str = "",
+        max_tokens: int = 512,
+    ) -> str:
+        """Vision call using OpenRouter's free vision model."""
+        msgs = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                {"type": "text", "text": question},
+            ],
+        })
+        resp = self._client.chat.completions.create(
+            model=config.OPENROUTER_VISION_MODEL,
+            messages=msgs,
+            max_tokens=max_tokens,
+            stream=False,
+            extra_headers={"HTTP-Referer": "https://cortana-ai.local"},
+        )
+        return resp.choices[0].message.content or ""
+
     @staticmethod
     def _normalize(messages: List[dict]) -> List[dict]:
         role_map = {"model": "assistant", "user": "user", "assistant": "assistant"}

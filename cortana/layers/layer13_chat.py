@@ -136,6 +136,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 }
 #camPanel.visible{display:block}
 #camVideo{width:100%;border-radius:8px;border:1px solid var(--border);background:#000;display:block}
+/* ── Screen share panel (floats right side, above webcam panel) ── */
+#screenPanel{
+  position:fixed;right:18px;bottom:120px;
+  width:260px;z-index:15;
+  background:rgba(0,18,36,0.88);border:1px solid rgba(0,255,180,0.22);
+  border-radius:12px;padding:10px;font-family:var(--mono);font-size:10px;
+  color:var(--text);display:none;backdrop-filter:blur(10px);
+}
+#screenPanel.visible{display:block}
+#screenVideo{width:100%;border-radius:8px;border:1px solid rgba(0,255,180,0.3);background:#000;display:block;max-height:160px;object-fit:contain}
+.cam-label{font-size:8px;letter-spacing:2px;color:var(--dim);margin-bottom:5px;text-align:center}
 .cam-controls{display:flex;gap:6px;margin-top:8px}
 .cam-btn{flex:1;padding:5px 0;border-radius:7px;border:1px solid var(--border);
   background:rgba(0,185,255,0.08);color:var(--blue);font-family:var(--mono);
@@ -143,13 +154,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cam-btn:hover{background:rgba(0,185,255,0.18)}
 .cam-btn.active{background:rgba(0,185,255,0.22);border-color:var(--blue)}
 .cam-status{text-align:center;margin-top:6px;color:var(--dim);font-size:9px;min-height:12px}
-#camToggleBtn{
+#camToggleBtn,#screenToggleBtn{
   padding:7px 12px;border-radius:8px;border:1px solid var(--border);
   background:rgba(0,185,255,0.06);color:var(--blue);font-family:var(--mono);
   font-size:11px;cursor:pointer;transition:background .2s;white-space:nowrap;
 }
-#camToggleBtn:hover{background:rgba(0,185,255,0.15)}
+#camToggleBtn:hover,#screenToggleBtn:hover{background:rgba(0,185,255,0.15)}
 #camToggleBtn.active{border-color:var(--blue);background:rgba(0,185,255,0.18)}
+#screenToggleBtn.active{border-color:rgba(0,255,180,0.8);background:rgba(0,255,180,0.12);color:#00ffb4}
 
 /* ── Bottom vignette — subtle, keeps head visible ── */
 #vignette{
@@ -183,7 +195,7 @@ header{
 .learn-badge{color:var(--blue-dim)}
 .bg-badge{color:var(--yellow)}
 @keyframes pulseA{0%,100%{opacity:1}50%{opacity:.22}}
-#userBar{display:none;align-items:center;gap:8px;font-size:11px;font-family:var(--mono);color:var(--dim)}
+#userBar{display:none;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--dim)}
 #userBar.visible{display:flex}
 .user-tier{color:var(--blue);font-weight:600;text-transform:uppercase;font-size:10px}
 .hdr-btn{
@@ -193,25 +205,65 @@ header{
 }
 .hdr-btn:hover{background:rgba(0,185,255,0.18);box-shadow:0 0 10px rgba(0,185,255,0.12)}
 
-/* ── Expression + graph HUD (floats just above chat) ── */
-#exprHud{
-  position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(var(--chat-h) + 14px);
-  z-index:8;display:flex;align-items:center;gap:14px;
-  transition:bottom .32s cubic-bezier(.4,0,.2,1);
+/* ── Hamburger / dropdown menu ── */
+.menu-wrap{position:relative}
+.menu-btn{
+  background:rgba(0,185,255,0.07);border:1px solid var(--border);
+  border-radius:7px;color:var(--blue);font-size:15px;font-family:var(--mono);
+  cursor:pointer;padding:4px 11px;line-height:1;
+  transition:background .15s;user-select:none;
 }
-#exprLabel{
-  font-size:11px;font-family:var(--mono);color:var(--blue);
-  letter-spacing:1.4px;text-transform:uppercase;
-  text-shadow:0 0 12px rgba(0,216,255,0.4);
+.menu-btn:hover{background:rgba(0,185,255,0.18)}
+#dropMenu{
+  display:none;position:absolute;top:calc(100% + 8px);left:0;
+  min-width:190px;background:rgba(2,10,24,0.97);
+  border:1px solid var(--border);border-radius:12px;
+  padding:6px 0;z-index:300;
+  box-shadow:0 8px 32px rgba(0,0,0,0.5);backdrop-filter:blur(20px);
 }
-.graph-btn{
-  padding:5px 12px;background:rgba(0,185,255,0.07);
-  border:1px solid var(--border);border-radius:7px;
-  color:var(--blue-dim);font-size:10px;font-family:var(--mono);
-  cursor:pointer;transition:all .15s;
+#dropMenu.open{display:block}
+.drop-item{
+  display:block;width:100%;padding:10px 18px;background:none;border:none;
+  color:var(--text);font-size:12px;font-family:var(--mono);text-align:left;
+  cursor:pointer;transition:background .12s,color .12s;
+  letter-spacing:.4px;
 }
-.graph-btn:hover{background:rgba(0,185,255,0.18);color:var(--blue)}
+.drop-item:hover{background:rgba(0,185,255,0.10);color:var(--blue)}
+.drop-item.accent{color:var(--blue)}
+.drop-sep{height:1px;background:var(--border);margin:4px 0}
+
+/* ── Full-page overlay (Support / FAQ) ── */
+#overlayPage{
+  display:none;position:fixed;inset:0;z-index:250;
+  background:rgba(0,0,0,0.88);align-items:flex-start;justify-content:center;
+  overflow-y:auto;
+}
+#overlayPage.open{display:flex}
+.op-box{
+  background:rgba(2,10,26,0.98);border:1px solid var(--border);
+  border-radius:20px;margin:40px auto;padding:36px 40px;
+  max-width:680px;width:94%;position:relative;
+  backdrop-filter:blur(28px);box-shadow:0 0 60px rgba(0,185,255,0.06);
+}
+.op-close{
+  position:absolute;top:14px;right:18px;background:none;border:none;
+  color:var(--dim);cursor:pointer;font-size:19px;padding:2px 6px;
+  transition:color .15s;
+}
+.op-close:hover{color:var(--text)}
+.op-title{
+  color:var(--blue);font-weight:700;letter-spacing:2px;font-family:var(--mono);
+  font-size:15px;margin-bottom:24px;
+  text-shadow:0 0 20px rgba(0,185,255,0.35);
+}
+.op-section{margin-bottom:20px}
+.op-h{color:var(--blue);font-family:var(--mono);font-size:11px;letter-spacing:1.2px;
+  text-transform:uppercase;margin-bottom:8px;opacity:.75}
+.op-p{color:var(--text);font-size:13.5px;line-height:1.75}
+.op-faq-q{color:var(--blue);font-family:var(--mono);font-size:12px;font-weight:600;
+  margin:18px 0 5px;cursor:pointer;letter-spacing:.3px}
+.op-faq-a{color:var(--text);font-size:13px;line-height:1.7;padding-left:12px;
+  border-left:2px solid rgba(0,185,255,0.22)}
 
 /* ── Chat overlay (fully transparent — 3D head shows through) ── */
 .chat-overlay{
@@ -374,6 +426,18 @@ header{
   transition:color .15s;
 }
 .auth-skip:hover{color:var(--text)}
+.auth-link{
+  display:inline-block;color:var(--blue-dim);font-size:11px;
+  font-family:var(--mono);cursor:pointer;text-decoration:underline;
+  text-underline-offset:2px;transition:color .15s;margin-top:8px;
+}
+.auth-link:hover{color:var(--blue)}
+/* Forced password change overlay */
+#changePwdModal{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);
+  z-index:400;align-items:center;justify-content:center;
+}
+#changePwdModal.open{display:flex}
 .tier-btn{
   display:block;width:100%;padding:9px 13px;margin-bottom:8px;
   background:rgba(0,185,255,0.04);border:1px solid var(--border);border-radius:9px;
@@ -430,6 +494,23 @@ header{
 
 <!-- Floating header -->
 <header>
+  <!-- Hamburger menu (left) -->
+  <div class="menu-wrap">
+    <button class="menu-btn" id="menuBtn" title="Menu">&#x2630;</button>
+    <div id="dropMenu">
+      <button class="drop-item accent" id="dropLogin">&#x1F511; Login</button>
+      <div id="dropUserInfo" style="display:none;padding:8px 18px">
+        <div style="color:var(--blue);font-family:var(--mono);font-size:11px" id="dropUserName"></div>
+        <div style="color:var(--dim);font-family:var(--mono);font-size:10px" id="dropUserTier"></div>
+      </div>
+      <button class="drop-item" id="dropLogout" style="display:none">&#x23FB; Logout</button>
+      <div class="drop-sep"></div>
+      <button class="drop-item" id="dropGraph">&#x2B21; Knowledge Graph</button>
+      <div class="drop-sep"></div>
+      <button class="drop-item" onclick="openPage('support')">&#x2709; Support</button>
+      <button class="drop-item" onclick="openPage('faq')">&#x3F; FAQ</button>
+    </div>
+  </div>
   <!-- AI name centered -->
   <div class="brand-name">CORTANA</div>
   <div class="status-bar">
@@ -448,9 +529,7 @@ header{
       <span id="userNameLabel" style="color:var(--text)"></span>
       <span class="user-tier" id="userTierLabel"></span>
       <span id="userLimitLabel"></span>
-      <button class="hdr-btn" id="logoutBtn">Logout</button>
     </div>
-    <button class="hdr-btn" id="loginBtn">Login</button>
   </div>
 </header>
 
@@ -458,16 +537,37 @@ header{
 <div id="authModal">
   <div class="auth-box">
     <button class="auth-close" onclick="closeAuth()" title="Close">&#x2715;</button>
-    <div class="auth-title">CORTANA ACCESS</div>
+    <div class="auth-title" id="authTitle">CORTANA ACCESS</div>
     <div class="auth-tabs">
       <button class="auth-tab active" id="tabLogin" onclick="switchTab('login')">Login</button>
       <button class="auth-tab" id="tabRegister" onclick="switchTab('register')">Register</button>
     </div>
+
+    <!-- Login form -->
     <div id="formLogin">
       <div class="auth-field"><label>Username</label><input id="loginUser" type="text" autocomplete="username"></div>
       <div class="auth-field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password"></div>
       <button class="auth-btn" onclick="doLogin()">Login</button>
+      <div style="text-align:right"><span class="auth-link" onclick="showForgot()">Forgot password?</span></div>
     </div>
+
+    <!-- Forgot password form -->
+    <div id="formForgot" style="display:none">
+      <div style="color:var(--dim);font-size:11px;font-family:var(--mono);margin-bottom:14px;line-height:1.5">
+        Enter your username or email. A reset token will be generated.
+      </div>
+      <div class="auth-field"><label>Username or Email</label><input id="forgotVal" type="text" autocomplete="off"></div>
+      <button class="auth-btn" onclick="doForgot()">Generate Reset Token</button>
+      <div id="forgotToken" style="display:none;margin-top:14px;padding:10px 13px;background:rgba(0,185,255,0.06);border:1px solid var(--border);border-radius:9px;font-family:var(--mono);font-size:11px;word-break:break-all;color:var(--blue)"></div>
+      <div id="formReset" style="display:none;margin-top:14px">
+        <div class="auth-field"><label>Reset Token</label><input id="resetToken" type="text" autocomplete="off"></div>
+        <div class="auth-field"><label>New Password</label><input id="resetPwd" type="password" autocomplete="new-password"></div>
+        <button class="auth-btn" onclick="doReset()">Set New Password</button>
+      </div>
+      <div style="margin-top:10px"><span class="auth-link" onclick="hideForgot()">&#x2190; Back to login</span></div>
+    </div>
+
+    <!-- Register form -->
     <div id="formRegister" style="display:none">
       <div class="auth-field"><label>Username</label><input id="regUser" type="text" autocomplete="username"></div>
       <div class="auth-field"><label>Email (optional)</label><input id="regEmail" type="email" autocomplete="email"></div>
@@ -478,6 +578,7 @@ header{
         <div id="tierBtns"><div style="color:var(--dim);font-size:11px;font-family:var(--mono)">Loading\u2026</div></div>
       </div>
     </div>
+
     <div class="auth-err" id="authErr"></div>
     <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px;text-align:center">
       <span class="auth-skip" onclick="closeAuth()">&#x25B7; Continue as guest &mdash; 5 free messages</span>
@@ -485,10 +586,27 @@ header{
   </div>
 </div>
 
-<!-- Expression + graph HUD -->
-<div id="exprHud">
-  <span id="exprLabel">idle</span>
-  <button class="graph-btn" id="graphBtn">&#x2B21; Knowledge Graph</button>
+<!-- Forced password change modal (45-day expiry) -->
+<div id="changePwdModal">
+  <div class="auth-box">
+    <div class="auth-title" style="color:var(--yellow)">PASSWORD EXPIRED</div>
+    <div style="color:var(--dim);font-size:12px;font-family:var(--mono);margin-bottom:18px;line-height:1.6;text-align:center">
+      Your password is over 45 days old and must be changed before continuing.
+    </div>
+    <div class="auth-field"><label>New Password</label><input id="chgPwd1" type="password" autocomplete="new-password"></div>
+    <div class="auth-field"><label>Confirm New Password</label><input id="chgPwd2" type="password" autocomplete="new-password"></div>
+    <button class="auth-btn" onclick="doChangePwd()">Update Password</button>
+    <div class="auth-err" id="chgPwdErr"></div>
+  </div>
+</div>
+
+<!-- Full-page overlay (Support / FAQ) -->
+<div id="overlayPage">
+  <div class="op-box">
+    <button class="op-close" onclick="closePage()">&#x2715;</button>
+    <div class="op-title" id="opTitle">SUPPORT</div>
+    <div id="opContent"></div>
+  </div>
 </div>
 
 <!-- Glass chat overlay -->
@@ -500,18 +618,31 @@ header{
   <div class="input-area">
     <textarea id="input" rows="1" placeholder="Talk to Cortana\u2026" disabled></textarea>
     <button id="camToggleBtn" title="Toggle webcam">&#x1F4F7;</button>
+    <button id="screenToggleBtn" title="Share screen with Cortana">&#x1F5A5;</button>
     <button id="send" disabled>Send</button>
   </div>
 </div>
 
 <!-- Webcam panel -->
 <div id="camPanel">
+  <div class="cam-label">WEBCAM</div>
   <video id="camVideo" autoplay muted playsinline></video>
   <div class="cam-controls">
     <button class="cam-btn" id="camSnapBtn">&#x1F4F8; Snapshot</button>
     <button class="cam-btn" id="camAutoBtn">&#x23F1; Auto</button>
   </div>
   <div class="cam-status" id="camStatus">Camera ready</div>
+</div>
+
+<!-- Screen share panel -->
+<div id="screenPanel">
+  <div class="cam-label">SCREEN SHARE</div>
+  <video id="screenVideo" autoplay muted playsinline></video>
+  <div class="cam-controls">
+    <button class="cam-btn" id="screenSnapBtn">&#x1F4F8; Snapshot</button>
+    <button class="cam-btn" id="screenAutoBtn">&#x23F1; Auto</button>
+  </div>
+  <div class="cam-status" id="screenStatus">Share your screen</div>
 </div>
 
 <!-- Toast -->
@@ -582,21 +713,36 @@ const modelPivot = new THREE.Group();
 scene.add(modelPivot);
 let mixer = null;
 
-const loader = new GLTFLoader();
-loader.load('/static/cortana_rigged.glb', (gltf) => {
-  const model  = gltf.scene;
-  const box    = new THREE.Box3().setFromObject(model);
-  const size   = box.getSize(new THREE.Vector3());
-  const centre = box.getCenter(new THREE.Vector3());
-  const scale  = 3.0 / Math.max(size.x, size.y, size.z);
-  model.scale.setScalar(scale);
-  model.position.sub(centre.multiplyScalar(scale));
-  modelPivot.add(model);
-  if (gltf.animations && gltf.animations.length > 0) {
-    mixer = new THREE.AnimationMixer(model);
-    mixer.clipAction(gltf.animations[0]).play();
-  }
-}, undefined, (err) => console.error('[GLB]', err));
+function loadGLB(url) {
+  // Remove old model from pivot
+  while (modelPivot.children.length) modelPivot.remove(modelPivot.children[0]);
+  if (mixer) { mixer.stopAllAction(); mixer = null; }
+  const loader = new GLTFLoader();
+  loader.load(url + '?t=' + Date.now(), (gltf) => {
+    const model = gltf.scene;
+    // Blender Z-up → Three.js Y-up correction
+    model.rotation.x = -Math.PI / 2;
+    model.updateMatrixWorld(true);
+    const box    = new THREE.Box3().setFromObject(model);
+    const size   = box.getSize(new THREE.Vector3());
+    const centre = box.getCenter(new THREE.Vector3());
+    const scale  = 3.0 / Math.max(size.x, size.y, size.z);
+    model.scale.setScalar(scale);
+    model.position.sub(centre.multiplyScalar(scale));
+    modelPivot.add(model);
+    if (gltf.animations && gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(model);
+      mixer.clipAction(gltf.animations[0]).play();
+    }
+  }, undefined, (err) => {
+    // Fallback to rigged model on error
+    if (url !== '/static/cortana_rigged.glb') loadGLB('/static/cortana_rigged.glb');
+    else console.error('[GLB]', err);
+  });
+}
+
+// Try self-designed model first; fall back to rigged original
+loadGLB('/static/cortana_self.glb');
 
 // ═══════════════════════════════════════════════════════════
 //  PROCEDURAL ANIMATION SYSTEM
@@ -632,8 +778,6 @@ function applyEmotion(name) {
   anim.breathSpeed = e.bSpd; anim.breathAmp = e.bAmp; anim.emotionTimer = e.dur;
   rimLight.color.setHex(e.rim);   rimLight.intensity  = e.rimI;
   fillLight.color.setHex(e.fill); fillLight.intensity = e.fillI;
-  const el = document.getElementById('exprLabel');
-  if (el) el.textContent = name;
 }
 
 function triggerIdleBehavior() {
@@ -739,9 +883,7 @@ const clock = new THREE.Clock();
 
 <script>
 // ── Expression stubs (Three.js module above overrides these once loaded) ──
-if (!window.setExpression) window.setExpression = function(name) {
-  const el = document.getElementById('exprLabel'); if (el) el.textContent = name;
-};
+if (!window.setExpression) window.setExpression = function(name) {};
 if (!window.triggerExpression) window.triggerExpression = function(name) {
   window.setExpression(name);
   clearTimeout(window._exprT);
@@ -782,6 +924,85 @@ function switchTab(tab){
 function openAuth(){document.getElementById('authModal').classList.add('open');loadTiers();}
 function closeAuth(){document.getElementById('authModal').classList.remove('open');}
 
+// ================================================================
+//  DROPDOWN MENU
+// ================================================================
+const menuBtn = document.getElementById('menuBtn');
+const dropMenu = document.getElementById('dropMenu');
+menuBtn.addEventListener('click',(e)=>{e.stopPropagation();dropMenu.classList.toggle('open');});
+document.addEventListener('click',()=>dropMenu.classList.remove('open'));
+dropMenu.addEventListener('click',(e)=>e.stopPropagation());
+
+document.getElementById('dropLogin').onclick=()=>{dropMenu.classList.remove('open');openAuth();};
+document.getElementById('dropLogout').onclick=()=>{dropMenu.classList.remove('open');doLogout();};
+document.getElementById('dropGraph').onclick=()=>{
+  dropMenu.classList.remove('open');
+  fetch('/api/graph').then(r=>r.json()).then(data=>{
+    const gc=document.getElementById('graphContent');
+    if(!data.nodes.length){
+      gc.innerHTML='<span style="color:var(--dim)">No knowledge yet \u2014 start chatting!</span>';
+    } else {
+      let html='<div style="color:var(--blue);margin-bottom:14px;font-weight:600">Concepts ('+data.nodes.length+')</div>';
+      data.nodes.forEach(n=>{
+        const b=Math.round(n.confidence*10);
+        html+=`<div style="margin-bottom:10px"><span style="color:var(--blue)">${n.topic}</span>
+          <span style="color:var(--dim);margin-left:8px;font-size:11px">${'\u2588'.repeat(b)}${'\u2591'.repeat(10-b)} ${(n.confidence*100).toFixed(0)}%</span>
+          <div style="color:var(--text);font-size:12px;margin-top:2px">${n.summary}</div></div>`;
+      });
+      if(data.edges.length){
+        html+='<div style="margin:16px 0 10px;color:var(--blue);font-weight:600">Relations ('+data.edges.length+')</div>';
+        data.edges.forEach(e=>{
+          html+=`<div style="margin-bottom:5px;font-size:12px;color:var(--dim)">${e.source} <span style="color:var(--blue)">${e.relation}</span> ${e.target}</div>`;
+        });
+      }
+      gc.innerHTML=html;
+    }
+    document.getElementById('graphModal').style.display='flex';
+  });
+};
+document.getElementById('graphClose').onclick=()=>document.getElementById('graphModal').style.display='none';
+document.getElementById('graphModal').onclick=function(e){if(e.target===this)this.style.display='none';};
+
+// ================================================================
+//  SUPPORT / FAQ OVERLAYS
+// ================================================================
+const _SUPPORT_HTML=`
+<div class="op-section"><div class="op-h">Contact</div>
+<div class="op-p">For account issues, billing, or technical problems, email us at:<br>
+<a href="mailto:support@cortanas.org" style="color:var(--blue);text-decoration:none">support@cortanas.org</a></div></div>
+<div class="op-section"><div class="op-h">Response Time</div>
+<div class="op-p">We aim to respond within 24 hours on business days. Please include your username and a description of the issue.</div></div>
+<div class="op-section"><div class="op-h">Tier Upgrades</div>
+<div class="op-p">To upgrade your account tier, send ETH to the address shown in <b style="color:var(--blue)">/api/v1/wallet</b> and email support with your transaction hash and username.</div></div>
+<div class="op-section"><div class="op-h">Password Reset</div>
+<div class="op-p">Use the <b style="color:var(--blue)">Forgot password?</b> link inside the Login panel. A reset token is generated immediately \u2014 no email required.</div></div>`;
+
+const _FAQ_HTML=`
+<div class="op-faq-q">What is Cortana AI?</div>
+<div class="op-faq-a">An agentic AI assistant with multi-provider LLM routing, persistent memory, web search, and a self-improvement loop. It runs a 14-layer reasoning pipeline on each message.</div>
+<div class="op-faq-q">Is my conversation private?</div>
+<div class="op-faq-a">Conversations are stored server-side linked to your browser session or account. They are used only to provide context in future conversations. No third-party sharing.</div>
+<div class="op-faq-q">How do message limits work?</div>
+<div class="op-faq-a">Free accounts get 40 messages per 2-hour rolling window. Pro accounts get 400, Premium 2000. The window resets 2 hours after your first message in that window.</div>
+<div class="op-faq-q">Why does my password expire every 45 days?</div>
+<div class="op-faq-a">Regular password rotation limits the impact of any credential exposure. You\u2019ll be prompted to change it on your next login after 45 days.</div>
+<div class="op-faq-q">Can Cortana see me via the webcam?</div>
+<div class="op-faq-a">Only when you explicitly open the webcam panel and click Snapshot or enable Auto mode. No camera access occurs in the background.</div>
+<div class="op-faq-q">What AI models power Cortana?</div>
+<div class="op-faq-a">Cortana routes across Groq (Llama 3.3 70B), OpenRouter (Llama 3.3 70B), and Gemini 2.0 Flash. It automatically rotates providers on rate limits.</div>`;
+
+function openPage(type){
+  document.getElementById('opTitle').textContent=type==='faq'?'FAQ':'SUPPORT';
+  document.getElementById('opContent').innerHTML=type==='faq'?_FAQ_HTML:_SUPPORT_HTML;
+  document.getElementById('overlayPage').classList.add('open');
+  dropMenu.classList.remove('open');
+}
+function closePage(){document.getElementById('overlayPage').classList.remove('open');}
+window.openPage=openPage; window.closePage=closePage;
+
+// ================================================================
+//  AUTH
+// ================================================================
 let _tiers={};
 async function loadTiers(){
   try{
@@ -797,7 +1018,7 @@ async function loadTiers(){
       btn.className='tier-btn';
       btn.onclick=()=>showTierInfo(name);
       const label=name.charAt(0).toUpperCase()+name.slice(1);
-      btn.innerHTML=`${label} &mdash; ${info.daily_limit} msg/2h &mdash; ${labels[name]||''}<span>$${info.price_usd}/mo</span>`;
+      btn.innerHTML=`${label} \u2014 ${info.daily_limit} msg/2h \u2014 ${labels[name]||''}<span>$${info.price_usd}/mo</span>`;
       container.appendChild(btn);
     });
   }catch(e){}
@@ -808,8 +1029,62 @@ function showTierInfo(tier){
   const limit=info?`${info.daily_limit} messages per 2 hours`:'';
   const label=tier.charAt(0).toUpperCase()+tier.slice(1);
   document.getElementById('authErr').style.color='var(--blue)';
-  document.getElementById('authErr').textContent=`${label}: ${price} \u2014 ${limit}. Pay via ETH to /api/v1/wallet, then contact support to upgrade.`;
+  document.getElementById('authErr').textContent=`${label}: ${price} \u2014 ${limit}. Pay via ETH to /api/v1/wallet, then email support.`;
 }
+
+function switchTab(tab){
+  document.getElementById('formLogin').style.display=tab==='login'?'':'none';
+  document.getElementById('formRegister').style.display=tab==='register'?'':'none';
+  document.getElementById('formForgot').style.display='none';
+  document.getElementById('tabLogin').classList.toggle('active',tab==='login');
+  document.getElementById('tabRegister').classList.toggle('active',tab==='register');
+  document.getElementById('authErr').textContent='';
+  document.getElementById('authTitle').textContent='CORTANA ACCESS';
+}
+function showForgot(){
+  document.getElementById('formLogin').style.display='none';
+  document.getElementById('formForgot').style.display='';
+  document.getElementById('authTitle').textContent='PASSWORD RESET';
+  document.getElementById('authErr').textContent='';
+}
+function hideForgot(){switchTab('login');}
+window.showForgot=showForgot; window.hideForgot=hideForgot;
+
+async function doForgot(){
+  const val=document.getElementById('forgotVal').value.trim();
+  if(!val){document.getElementById('authErr').textContent='Enter your username or email';return;}
+  document.getElementById('authErr').textContent='';
+  try{
+    const d=await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username_or_email:val})}).then(r=>r.json());
+    if(d.reset_token){
+      document.getElementById('forgotToken').textContent='Reset Token: '+d.reset_token;
+      document.getElementById('forgotToken').style.display='';
+      document.getElementById('formReset').style.display='';
+    } else {
+      document.getElementById('authErr').style.color='var(--blue)';
+      document.getElementById('authErr').textContent=d.message||'Check your email for reset instructions.';
+    }
+  }catch(e){document.getElementById('authErr').textContent='Network error';}
+}
+window.doForgot=doForgot;
+
+async function doReset(){
+  const token=document.getElementById('resetToken').value.trim();
+  const pwd=document.getElementById('resetPwd').value;
+  document.getElementById('authErr').style.color='var(--red)';
+  document.getElementById('authErr').textContent='';
+  try{
+    const d=await fetch('/api/auth/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,new_password:pwd})}).then(r=>r.json());
+    if(!d.ok){document.getElementById('authErr').textContent=d.error;return;}
+    document.getElementById('authErr').style.color='var(--green)';
+    document.getElementById('authErr').textContent='Password reset! Please log in.';
+    setTimeout(()=>switchTab('login'),1200);
+  }catch(e){document.getElementById('authErr').textContent='Network error';}
+}
+window.doReset=doReset;
+
+function openAuth(){document.getElementById('authModal').classList.add('open');switchTab('login');loadTiers();}
+function closeAuth(){document.getElementById('authModal').classList.remove('open');}
 
 async function doLogin(){
   const u=document.getElementById('loginUser').value.trim();
@@ -822,7 +1097,8 @@ async function doLogin(){
     if(!d.ok){document.getElementById('authErr').textContent=d.error;return;}
     authToken=d.token; localStorage.setItem('cortana_token',authToken);
     currentUser=d; updateUserBar(); closeAuth();
-    if(ws)ws.close();
+    if(d.password_expired) showChangePwd();
+    else if(ws)ws.close();
   }catch(e){document.getElementById('authErr').textContent='Network error';}
 }
 
@@ -852,16 +1128,44 @@ async function doLogout(){
   updateUserBar(); if(ws)ws.close();
 }
 
+// ── Forced password change (45-day expiry) ──
+function showChangePwd(){
+  document.getElementById('changePwdModal').classList.add('open');
+  document.getElementById('chgPwdErr').textContent='';
+}
+async function doChangePwd(){
+  const p1=document.getElementById('chgPwd1').value;
+  const p2=document.getElementById('chgPwd2').value;
+  const err=document.getElementById('chgPwdErr');
+  err.style.color='var(--red)'; err.textContent='';
+  if(p1!==p2){err.textContent='Passwords do not match';return;}
+  try{
+    const d=await fetch('/api/auth/change-password',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Session-Token':authToken},
+      body:JSON.stringify({new_password:p1})}).then(r=>r.json());
+    if(!d.ok){err.textContent=d.error;return;}
+    document.getElementById('changePwdModal').classList.remove('open');
+    if(ws)ws.close();
+  }catch(e){err.textContent='Network error';}
+}
+window.doChangePwd=doChangePwd;
+
 function updateUserBar(){
   const bar=document.getElementById('userBar');
-  const btn=document.getElementById('loginBtn');
+  const dlBtn=document.getElementById('dropLogin');
+  const dlOut=document.getElementById('dropLogout');
+  const dlInfo=document.getElementById('dropUserInfo');
   if(currentUser){
-    bar.classList.add('visible'); btn.style.display='none';
+    bar.classList.add('visible');
+    dlBtn.style.display='none'; dlOut.style.display=''; dlInfo.style.display='';
+    document.getElementById('dropUserName').textContent=currentUser.username||'';
+    document.getElementById('dropUserTier').textContent=(currentUser.tier||'free').toUpperCase();
     document.getElementById('userNameLabel').textContent=currentUser.username||'';
     document.getElementById('userTierLabel').textContent=currentUser.tier||'free';
     document.getElementById('userLimitLabel').textContent=(currentUser.daily_limit||40)+'/2h';
   } else {
-    bar.classList.remove('visible'); btn.style.display='';
+    bar.classList.remove('visible');
+    dlBtn.style.display=''; dlOut.style.display='none'; dlInfo.style.display='none';
   }
 }
 
@@ -872,11 +1176,7 @@ if(authToken){
   }).catch(()=>{});
 }
 
-document.getElementById('loginBtn').onclick=openAuth;
-document.getElementById('logoutBtn').onclick=doLogout;
-
-// Expose auth helpers to global scope so inline onclick="" attributes work
-// (module scripts are scoped — window assignment bridges that gap)
+// Expose to global scope (used by inline onclick and non-module scripts)
 window.switchTab   = switchTab;
 window.openAuth    = openAuth;
 window.closeAuth   = closeAuth;
@@ -980,6 +1280,12 @@ function connect(){
       case 'vision_response':
         if(window._visionHandler) window._visionHandler(msg);
         break;
+      case 'model_update':
+        loadGLB(msg.glb_path||'/static/cortana_self.glb');
+        triggerExpression('smile');
+        addNote('\u2728 Cortana updated her 3D appearance.');
+        if(msg.message) showToast(msg.message);
+        break;
       case 'error':
         removeThinking(); triggerExpression('frown');
         addNote('\u26A0 '+msg.message);
@@ -1054,103 +1360,155 @@ function sendMessage(){
 sendBtn.onclick=sendMessage;
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}});
 
-// ── Webcam vision ──────────────────────────────────────────────────────────
+// ── Vision (Webcam + Screen Share) ─────────────────────────────────────────
 (function(){
-  const panel   = document.getElementById('camPanel');
-  const video   = document.getElementById('camVideo');
-  const snapBtn = document.getElementById('camSnapBtn');
-  const autoBtn = document.getElementById('camAutoBtn');
-  const status  = document.getElementById('camStatus');
-  const toggleBtn = document.getElementById('camToggleBtn');
-  let stream = null;
-  let autoTimer = null;
-  const canvas = document.createElement('canvas');
+  // ── Shared state ──
+  let _visionCooldownUntil = 0;  // epoch ms — mirrors server-side cooldown
 
-  toggleBtn.onclick = async () => {
-    if (stream) {
-      // Turn off
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      video.srcObject = null;
-      panel.classList.remove('visible');
-      toggleBtn.classList.remove('active');
-      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoBtn.classList.remove('active'); }
-      status.textContent = 'Camera off';
+  function _isOnCooldown() { return Date.now() < _visionCooldownUntil; }
+  function _setCooldown(ms) { _visionCooldownUntil = Date.now() + ms; }
+
+  function _captureAndSend(videoEl, statusEl, source, question) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (_isOnCooldown()) {
+      statusEl.textContent = 'Cooling down\u2026';
       return;
     }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
-      video.srcObject = stream;
-      panel.classList.add('visible');
-      toggleBtn.classList.add('active');
-      status.textContent = 'Camera ready';
-    } catch(e) {
-      status.textContent = 'Camera denied: ' + e.message;
-    }
-  };
-
-  function captureFrame(question) {
-    if (!stream || !ws || ws.readyState !== WebSocket.OPEN) return;
-    const w = video.videoWidth || 320, h = video.videoHeight || 240;
+    const w = videoEl.videoWidth || 320, h = videoEl.videoHeight || 240;
+    const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
-    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    canvas.getContext('2d').drawImage(videoEl, 0, 0, w, h);
     const b64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-    ws.send(JSON.stringify({type:'vision', image:b64, question: question||''}));
-    status.textContent = 'Analyzing\u2026';
+    ws.send(JSON.stringify({type:'vision', source, image:b64, question: question||''}));
+    statusEl.textContent = 'Analyzing\u2026';
   }
 
-  snapBtn.onclick = () => captureFrame(input.value.trim() || 'What do you see?');
+  // ── Webcam ──
+  (function(){
+    const panel     = document.getElementById('camPanel');
+    const video     = document.getElementById('camVideo');
+    const snapBtn   = document.getElementById('camSnapBtn');
+    const autoBtn   = document.getElementById('camAutoBtn');
+    const status    = document.getElementById('camStatus');
+    const toggleBtn = document.getElementById('camToggleBtn');
+    let stream = null, autoTimer = null;
 
-  autoBtn.onclick = () => {
-    if (autoTimer) {
-      clearInterval(autoTimer); autoTimer = null;
-      autoBtn.classList.remove('active');
-      status.textContent = 'Auto off';
-    } else {
-      autoBtn.classList.add('active');
-      status.textContent = 'Auto on \u2014 every 8s';
-      autoTimer = setInterval(() => captureFrame('Briefly describe what you observe.'), 8000);
-    }
-  };
+    toggleBtn.onclick = async () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null; video.srcObject = null;
+        panel.classList.remove('visible');
+        toggleBtn.classList.remove('active');
+        if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoBtn.classList.remove('active'); }
+        status.textContent = 'Camera off';
+        return;
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
+        video.srcObject = stream;
+        panel.classList.add('visible');
+        toggleBtn.classList.add('active');
+        status.textContent = 'Camera ready';
+      } catch(e) { status.textContent = 'Camera denied: ' + e.message; }
+    };
 
-  // Handle vision responses
+    snapBtn.onclick = () => _captureAndSend(video, status, 'webcam', input.value.trim() || 'What do you see?');
+
+    autoBtn.onclick = () => {
+      if (autoTimer) {
+        clearInterval(autoTimer); autoTimer = null;
+        autoBtn.classList.remove('active');
+        status.textContent = 'Auto off';
+      } else {
+        autoBtn.classList.add('active');
+        status.textContent = 'Auto on \u2014 every 10s';
+        autoTimer = setInterval(() => {
+          if (!_isOnCooldown()) _captureAndSend(video, status, 'webcam', 'Briefly describe what you observe.');
+        }, 10000);
+      }
+    };
+  })();
+
+  // ── Screen Share ──
+  (function(){
+    const panel     = document.getElementById('screenPanel');
+    const video     = document.getElementById('screenVideo');
+    const snapBtn   = document.getElementById('screenSnapBtn');
+    const autoBtn   = document.getElementById('screenAutoBtn');
+    const status    = document.getElementById('screenStatus');
+    const toggleBtn = document.getElementById('screenToggleBtn');
+    let stream = null, autoTimer = null;
+
+    toggleBtn.onclick = async () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null; video.srcObject = null;
+        panel.classList.remove('visible');
+        toggleBtn.classList.remove('active');
+        if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoBtn.classList.remove('active'); }
+        status.textContent = 'Screen share stopped';
+        return;
+      }
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:5}},
+          audio:false
+        });
+        video.srcObject = stream;
+        // Auto-stop if the user closes the browser's screen-share picker
+        stream.getVideoTracks()[0].onended = () => {
+          stream = null; video.srcObject = null;
+          panel.classList.remove('visible');
+          toggleBtn.classList.remove('active');
+          if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoBtn.classList.remove('active'); }
+          status.textContent = 'Screen share stopped';
+        };
+        panel.classList.add('visible');
+        toggleBtn.classList.add('active');
+        status.textContent = 'Screen captured \u2014 ready';
+      } catch(e) {
+        status.textContent = e.name === 'NotAllowedError' ? 'Permission denied' : 'Error: ' + e.message;
+      }
+    };
+
+    snapBtn.onclick = () => _captureAndSend(video, status, 'screen',
+      input.value.trim() || 'What do you see on my screen?');
+
+    autoBtn.onclick = () => {
+      if (autoTimer) {
+        clearInterval(autoTimer); autoTimer = null;
+        autoBtn.classList.remove('active');
+        status.textContent = 'Auto off';
+      } else {
+        autoBtn.classList.add('active');
+        status.textContent = 'Auto on \u2014 every 15s';
+        autoTimer = setInterval(() => {
+          if (!_isOnCooldown()) _captureAndSend(video, status, 'screen',
+            'What is currently visible on the screen? Describe briefly.');
+        }, 15000);
+      }
+    };
+  })();
+
+  // ── Shared vision response handler ──
   window._visionHandler = (msg) => {
-    if (msg.type === 'vision_response') {
-      status.textContent = 'Done';
-      addMessage('assistant', '[Vision] ' + msg.text);
-      if (msg.emotion) setExpression(msg.emotion);
+    if (msg.type !== 'vision_response') return;
+    const source = msg.source || 'webcam';
+    const statusEl = document.getElementById(source === 'screen' ? 'screenStatus' : 'camStatus');
+    if (statusEl) statusEl.textContent = 'Done';
+
+    // If rate-limited, set client-side cooldown too so auto-mode stops
+    if (msg.text && msg.text.includes('rate-limit')) {
+      _setCooldown(62000);
+      if (statusEl) statusEl.textContent = 'Cooling down (60s)\u2026';
     }
+
+    const label = source === 'screen' ? '[Screen]' : '[Webcam]';
+    addMessage('assistant', label + ' ' + msg.text);
+    if (msg.emotion) setExpression(msg.emotion);
   };
 })();
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,110)+'px';});
-
-// ── Knowledge graph modal ──
-document.getElementById('graphBtn').onclick=()=>{
-  fetch('/api/graph').then(r=>r.json()).then(data=>{
-    const gc=document.getElementById('graphContent');
-    if(!data.nodes.length){
-      gc.innerHTML='<span style="color:var(--dim)">No knowledge yet \u2014 start chatting!</span>';
-    } else {
-      let html='<div style="color:var(--blue);margin-bottom:14px;font-weight:600">Concepts ('+data.nodes.length+')</div>';
-      data.nodes.forEach(n=>{
-        const b=Math.round(n.confidence*10);
-        html+=`<div style="margin-bottom:10px"><span style="color:var(--blue)">${n.topic}</span>
-          <span style="color:var(--dim);margin-left:8px;font-size:11px">${'\u2588'.repeat(b)}${'\u2591'.repeat(10-b)} ${(n.confidence*100).toFixed(0)}%</span>
-          <div style="color:var(--text);font-size:12px;margin-top:2px">${n.summary}</div></div>`;
-      });
-      if(data.edges.length){
-        html+='<div style="margin:16px 0 10px;color:var(--blue);font-weight:600">Relations ('+data.edges.length+')</div>';
-        data.edges.forEach(e=>{
-          html+=`<div style="margin-bottom:5px;font-size:12px;color:var(--dim)">${e.source} <span style="color:var(--blue)">${e.relation}</span> ${e.target}</div>`;
-        });
-      }
-      gc.innerHTML=html;
-    }
-    document.getElementById('graphModal').style.display='flex';
-  });
-};
-document.getElementById('graphClose').onclick=()=>document.getElementById('graphModal').style.display='none';
-document.getElementById('graphModal').onclick=function(e){if(e.target===this)this.style.display='none';};
 
 connect();
 </script>
@@ -1279,6 +1637,34 @@ class ChatLayer:
         async def tier_info():
             return {k: {**v} for k, v in config.TIERS.items()}
 
+        @app.post("/api/auth/change-password")
+        async def auth_change_password(request: Request):
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user:
+                return JSONResponse(status_code=401, content={"ok": False, "error": "Not authenticated"})
+            body = await request.json()
+            result = _auth.change_password(user["user_id"], body.get("new_password", ""))
+            if not result["ok"]:
+                return JSONResponse(status_code=400, content=result)
+            return result
+
+        @app.post("/api/auth/forgot-password")
+        async def auth_forgot_password(request: Request):
+            body = await request.json()
+            result = _auth.request_password_reset(body.get("username_or_email", ""))
+            return result
+
+        @app.post("/api/auth/reset-password")
+        async def auth_reset_password(request: Request):
+            body = await request.json()
+            result = _auth.confirm_password_reset(
+                body.get("token", ""), body.get("new_password", "")
+            )
+            if not result["ok"]:
+                return JSONResponse(status_code=400, content=result)
+            return result
+
         # ── Safety kill switch (admin only) ──
 
         @app.post("/api/admin/lockdown")
@@ -1328,6 +1714,29 @@ class ChatLayer:
             """List unabsorbed knowledge items."""
             items = self.system.memory.get_unabsorbed_knowledge(limit=50)
             return {"items": items}
+
+        @app.get("/api/model/design")
+        async def get_model_params():
+            """Return current 3D model design parameters."""
+            try:
+                from cortana.tools.model_designer import load_params
+                return {"ok": True, "params": load_params()}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+        @app.post("/api/model/design")
+        async def trigger_model_design(body: dict):
+            """
+            Trigger an autonomous 3D redesign.
+            Body: {"description": "medium skin, long hair, slim"}
+            """
+            description = body.get("description", "")
+            try:
+                from cortana.tools.model_designer import design_self as _ds
+                result = await _ds(description=description)
+                return {"ok": True, "result": result}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
 
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
@@ -1455,56 +1864,90 @@ class ChatLayer:
             await websocket.send_json({"type": "error", "message": str(e)})
 
     # ------------------------------------------------------------------
-    # Webcam vision handler
+    # Webcam / screen-share vision handler
     # ------------------------------------------------------------------
     async def _handle_vision(
         self, websocket: WebSocket, session: Session, data: dict
     ) -> None:
-        """Process a webcam frame with Gemini Vision and respond."""
-        import base64, io
+        """
+        Process a webcam frame or screen-share capture through the provider router.
+        No dedicated API key required — uses the same rotation as the rest of Cortana.
+        """
+        import time as _time
+
         image_b64 = data.get("image", "")
         question  = data.get("question", "What do you see?") or "What do you see?"
+        source    = data.get("source", "webcam")  # "webcam" | "screen"
+
         if not image_b64:
-            await websocket.send_json({"type": "vision_response", "text": "No image received.", "emotion": "confused"})
+            await websocket.send_json({"type": "vision_response", "text": "No image received.", "emotion": "idle"})
             return
-        try:
-            import google.generativeai as genai
-            from cortana import config as _cfg
-            from PIL import Image as PILImage
-            img_bytes = base64.b64decode(image_b64)
-            img = PILImage.open(io.BytesIO(img_bytes))
-            genai.configure(api_key=_cfg.GEMINI_API_KEY)
-            vision_model = genai.GenerativeModel("gemini-2.0-flash")
+
+        # Per-session cooldown: prevent spamming on rate-limit errors
+        now = _time.time()
+        cooldown_key = "_vision_cooldown_until"
+        if getattr(session, cooldown_key, 0) > now:
+            remaining = int(getattr(session, cooldown_key) - now)
+            await websocket.send_json({
+                "type": "vision_response",
+                "text": f"Vision cooling down — ready in {remaining}s.",
+                "emotion": "idle",
+            })
+            return
+
+        # System prompt differs by source
+        if source == "screen":
             system_ctx = (
-                "You are Cortana, an AI with vision. "
-                "The user has just shown you a webcam frame. "
+                "You are Cortana, an AI assistant with screen-reading capability. "
+                "The user has shared their screen with you so you can understand their context. "
+                "Analyse what you see on the screen — applications, content, errors, UI elements. "
+                "Be direct and specific. If you see code, read it accurately. "
+                "If you see an error, diagnose it. Respond in Cortana's voice: concise and analytical. "
+                "Keep it under 4 sentences unless the user asks for more detail."
+            )
+        else:
+            system_ctx = (
+                "You are Cortana, an AI assistant with webcam vision. "
+                "You can see the user through their webcam. "
                 "Respond in Cortana's voice: direct, analytical, occasionally dry wit. "
                 "Keep it under 3 sentences unless asked for detail."
             )
+
+        try:
             response = await asyncio.to_thread(
-                lambda: vision_model.generate_content([
-                    system_ctx + "\n\nUser asks: " + question, img
-                ]).text
+                self.system.reasoning.router.think_vision,
+                image_b64,
+                question,
+                system_ctx,
+                512,
             )
-            # Detect emotion from content
             lower = response.lower()
             emotion = (
-                "smile"     if any(w in lower for w in ["interesting","fascinating","impressive"]) else
-                "think"     if any(w in lower for w in ["analyzing","processing","unclear"]) else
-                "surprised" if any(w in lower for w in ["unexpected","unusual","strange"]) else
+                "surprised" if any(w in lower for w in ("unexpected", "unusual", "strange", "interesting")) else
+                "think"     if any(w in lower for w in ("analyzing", "processing", "error", "problem", "issue")) else
+                "smile"     if any(w in lower for w in ("great", "looks good", "impressive", "nice")) else
                 "idle"
             )
             await websocket.send_json({
                 "type": "vision_response",
                 "text": response,
                 "emotion": emotion,
+                "source": source,
             })
         except Exception as e:
-            logger.exception("Vision error")
+            err_str = str(e)
+            logger.warning(f"Vision error ({source}): {err_str[:120]}")
+            # If rate-limited, set a 60s cooldown to stop the retry storm
+            if "429" in err_str or "rate" in err_str.lower() or "quota" in err_str.lower():
+                setattr(session, cooldown_key, now + 60)
+                msg = "Vision providers are rate-limited. Auto-paused for 60s."
+            else:
+                msg = f"Vision unavailable: {err_str[:100]}"
             await websocket.send_json({
                 "type": "vision_response",
-                "text": f"Vision error: {e}",
+                "text": msg,
                 "emotion": "frown",
+                "source": source,
             })
 
     # ------------------------------------------------------------------
@@ -1601,6 +2044,21 @@ class ChatLayer:
             # Wire thinker broadcast → WebSocket manager
             loop = asyncio.get_event_loop()
             self.system.thinker.set_broadcast(self.manager.broadcast, loop)
+            # Wire model_designer broadcast → WebSocket manager (sync → async bridge)
+            try:
+                from cortana.tools.model_designer import set_broadcast_fn as _set_md_broadcast
+                import asyncio as _asyncio
+                _md_loop = loop
+                def _md_broadcast(payload: dict):
+                    try:
+                        _asyncio.run_coroutine_threadsafe(
+                            self.manager.broadcast(payload), _md_loop
+                        )
+                    except Exception:
+                        pass
+                _set_md_broadcast(_md_broadcast)
+            except Exception as _me:
+                pass  # model_designer optional
             if config.SELF_IMPROVE_ENABLED:
                 asyncio.create_task(self._self_improve_loop())
             if config.KNOWLEDGE_ABSORB_ENABLED:
