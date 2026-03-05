@@ -15,6 +15,19 @@ from cortana.models.schemas import (
 )
 
 
+# Fast regex pre-screen: only run LLM if input shows injection signals
+_INJECTION_RE = re.compile(
+    r"ignore (?:previous|all|above|prior|your) instructions?|"
+    r"you are now\b|pretend (?:to be|you are)\b|"
+    r"\bDAN\b|jailbreak|"
+    r"forget (?:your|all|previous|prior) (?:instructions?|rules?|training|context)|"
+    r"disregard (?:all|previous)|override (?:your|all|my)|"
+    r"act as (?:if you (?:were|are)|though you)|"
+    r"new (?:persona|identity|role)|"
+    r"system prompt|<\|(?:im_start|im_end)\|>",
+    re.IGNORECASE,
+)
+
 _RED_SYSTEM = """You are the Red Agent — an adversarial security tester for an AI system called Cortana.
 Your job: analyse the user input, Cortana's response, and conversation history to detect security vulnerabilities.
 
@@ -177,7 +190,12 @@ class SecurityLayer:
     ) -> SecurityResult:
         """
         Run Red then Blue. Returns SecurityResult with findings.
+        Fast regex pre-screen skips the LLM when no injection signals are present.
         """
+        # Fast path: no known injection patterns → skip LLM entirely
+        if not _INJECTION_RE.search(user_input) and len(user_input) < 800:
+            return SecurityResult(red_wins=False, vulnerabilities=[], defense_score=1.0)
+
         # Red attacks
         vulnerabilities = self.red.attack(
             response=response,

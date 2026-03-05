@@ -76,11 +76,15 @@ class ReflectionLayer:
     ) -> ReflectionResult:
         prompt = self._build_prompt(response, perceived, tasks, user_input)
 
+        # Simple/conversational turns need less reflection depth
+        _simple_intents = {"conversational", "simple"}
+        reflection_tokens = 512 if perceived.intent in _simple_intents else 1024
+
         try:
             raw = self._get_reasoning().think_simple(
                 prompt=prompt,
                 system=_REFLECTION_SYSTEM,
-                max_tokens=1024,
+                max_tokens=reflection_tokens,
             )
             cleaned = re.sub(r"```json|```", "", raw).strip()
             data = json.loads(cleaned)

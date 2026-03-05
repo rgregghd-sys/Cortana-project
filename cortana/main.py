@@ -9,10 +9,16 @@ Usage:
 """
 from __future__ import annotations
 import asyncio
+import concurrent.futures
 import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
+
+# Background thread pool for L9+L10 post-processing (runs after response is sent)
+_POST_PROCESS_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=3, thread_name_prefix="cortana-post"
+)
 
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,6 +72,25 @@ from cortana.layers.layer11_patcher import PatchWriterLayer
 from cortana.layers.layer12_notifier import PatchImplementerLayer
 from cortana.background.thinker import BackgroundThinker
 from cortana.ui import terminal as ui
+
+
+def _fast_emotion(response: str, intent: str) -> str:
+    """
+    Heuristic emotion based on intent + response keywords.
+    Avoids an LLM call — L9's richer version runs in background.
+    """
+    lower = response.lower()
+    if any(w in lower for w in ("sorry", "unfortunately", "unable to", "cannot", "can't")):
+        return "sad"
+    if intent in ("code", "analysis", "research"):
+        return "think"
+    if intent == "creative":
+        return "smile"
+    if intent == "conversational":
+        if any(w in lower for w in ("!", "great", "absolutely", "of course", "happy to")):
+            return "smile"
+        return "idle"
+    return "idle"
 
 
 class CortanaSystem:
@@ -231,6 +256,81 @@ class CortanaSystem:
             return fallback
 
     # ------------------------------------------------------------------
+    # Background post-processing (L10 Security + L9 Reflection)
+    # ------------------------------------------------------------------
+    _SKIP_SECURITY_FOR = frozenset({"conversational", "simple"})
+
+    def _background_security_reflection(
+        self,
+        response: str,
+        perceived: Any,
+        state: Any,
+        tasks: list,
+        raw_input: str,
+        memories: list,
+        conversation: list,
+    ) -> None:
+        """
+        Runs L10 Security + L9 Reflection in a background thread after the
+        response has already been sent to the user.
+        """
+        try:
+            # L10: skip entirely for safe, non-complex intents
+            if perceived.intent not in self._SKIP_SECURITY_FOR and len(raw_input.strip()) >= 4:
+                security_result = self._safe_call(
+                    10, "Security",
+                    self.security.evaluate,
+                    None,
+                    response=response,
+                    user_input=raw_input,
+                    conversation_history=conversation,
+                    memory_entries=memories,
+                )
+                if security_result and security_result.red_wins:
+                    ui.print_system(
+                        f"[L10-BG] Security alert — Red wins! "
+                        f"Vulnerabilities: {[v.type for v in security_result.vulnerabilities]} "
+                        f"| Defense score: {security_result.defense_score:.2f}",
+                        level="warn",
+                    )
+                    patch_result = self._safe_call(
+                        11, "Patch Writer",
+                        self.patcher.write_patches,
+                        None,
+                        security_result.vulnerabilities,
+                    )
+                    if patch_result and patch_result.patch_files:
+                        ui.print_system(
+                            f"[L11-BG] {len(patch_result.patch_files)} patch(es) written",
+                            level="info",
+                        )
+                        self._safe_call(
+                            12, "Patch Implementer",
+                            self.notifier.process_patches,
+                            [],
+                            patch_result,
+                        )
+                elif security_result:
+                    ui.print_system(
+                        f"[L10-BG] Clear — defense score: {security_result.defense_score:.2f}",
+                        level="ok",
+                    )
+
+            # L9: always run for memory storage + concept extraction
+            self._safe_call(
+                9, "Reflection",
+                self.reflection.reflect,
+                None,
+                response=response,
+                perceived=perceived,
+                state=state,
+                tasks=tasks if tasks else None,
+                user_input=raw_input,
+            )
+        except Exception as exc:
+            ui.print_system(f"[BG-POST] Error: {exc}", level="warn")
+
+    # ------------------------------------------------------------------
     # Core processing pipeline
     # ------------------------------------------------------------------
 
@@ -287,6 +387,45 @@ class CortanaSystem:
             PerceivedInput(content=raw_input, intent="simple", complexity=0.1),
             UserInput(raw=raw_input),
         )
+
+        # --- Self-design fast path ---
+        if perceived.intent == "self_design":
+            try:
+                from cortana.layers import layer8_tools as _tools
+                # Use reasoning to extract appearance description from user input
+                desc_prompt = (
+                    f"Extract a concise 3D appearance description from this request: "
+                    f"'{raw_input}'. Output ONLY keywords like: "
+                    f"'<tone> skin, <hair>, <build>' (e.g. 'medium skin, long hair, slim'). "
+                    f"If the user wants you to decide autonomously, choose what looks most natural."
+                )
+                try:
+                    appearance_desc = self.reasoning.think_simple(
+                        prompt=desc_prompt,
+                        system="You extract concise appearance parameters. Reply with only a short comma-separated list.",
+                    ).strip()
+                except Exception:
+                    appearance_desc = "medium skin, short_crop hair, slim"
+
+                build_result = await _tools.design_self(description=appearance_desc)
+                ack = (
+                    f"I've redesigned my 3D appearance.\n\n"
+                    f"Parameters used: {appearance_desc}.\n\n"
+                    f"Build result: {build_result}\n\n"
+                    f"The model will update in your browser automatically."
+                )
+            except Exception as exc:
+                ack = f"Self-design failed: {exc}"
+
+            new_state = CortanaState(interaction_count=state.interaction_count + 1)
+            new_conv = list(conversation) + [
+                ConversationTurn(role="user", content=raw_input),
+                ConversationTurn(role="assistant", content=ack),
+            ]
+            self.memory.save_turn(
+                new_conv[-2].content[:20], "user", raw_input
+            ) if hasattr(self.memory, "save_turn") else None
+            return ack, new_state, new_conv, "smile"
 
         # --- Layer 2: Memory recall ---
         memories: List[str] = self._safe_call(
@@ -435,76 +574,34 @@ class CortanaSystem:
         if display:
             display.stop()
 
-        # --- Layer 10: Red vs Blue Security ---
-        security_result = None
-        if not l4_failed and len(raw_input.strip()) >= 4:
-            security_result = self._safe_call(
-                10, "Security",
-                self.security.evaluate,
-                None,
-                response=response,
-                user_input=raw_input,
-                conversation_history=conversation,
-                memory_entries=memories,
-            )
-
-        if security_result and security_result.red_wins:
-            ui.print_system(
-                f"[L10] Security alert — Red wins! "
-                f"Vulnerabilities: {[v.type for v in security_result.vulnerabilities]} "
-                f"| Defense score: {security_result.defense_score:.2f}",
-                level="warn",
-            )
-            patch_result = self._safe_call(
-                11, "Patch Writer",
-                self.patcher.write_patches,
-                None,
-                security_result.vulnerabilities,
-            )
-            if patch_result and patch_result.patch_files:
-                ui.print_system(
-                    f"[L11] {len(patch_result.patch_files)} patch(es) written",
-                    level="info",
-                )
-                self._safe_call(
-                    12, "Patch Implementer",
-                    self.notifier.process_patches,
-                    [],
-                    patch_result,
-                )
-        elif security_result:
-            ui.print_system(
-                f"[L10] Clear — defense score: {security_result.defense_score:.2f}",
-                level="ok",
-            )
-
-        # --- Layer 9: Reflection ---
-        reflection = None
+        # --- Background: L10 Security + L9 Reflection ---
+        # Fire-and-forget: user already has the streamed response; post-processing
+        # runs in a background thread so it doesn't add latency.
         if not l4_failed:
-            reflection = self._safe_call(
-                9, "Reflection",
-                self.reflection.reflect,
-                None,
-                response=response,
-                perceived=perceived,
-                state=state,
-                tasks=tasks if tasks else None,
-                user_input=raw_input,
+            _POST_PROCESS_POOL.submit(
+                self._background_security_reflection,
+                response,
+                perceived,
+                state,
+                list(tasks) if tasks else [],
+                raw_input,
+                list(memories) if memories else [],
+                list(conversation),
             )
 
-        final = reflection.final_response if reflection else response
-        emotion = reflection.emotion if reflection else "idle"
+        # Fast emotion heuristic — L9's richer version runs in background
+        emotion = _fast_emotion(response, perceived.intent)
 
         new_state = CortanaState(interaction_count=state.interaction_count + 1)
         new_conversation = list(conversation) + [
             ConversationTurn(role="user", content=raw_input),
-            ConversationTurn(role="assistant", content=final),
+            ConversationTurn(role="assistant", content=response),
         ]
 
         self.memory.update_working_memory("last_intent", perceived.intent)
         self.memory.update_working_memory("last_complexity", perceived.complexity)
 
-        return final, new_state, new_conversation, emotion
+        return response, new_state, new_conversation, emotion
 
     async def process(self, raw_input: str) -> str:
         """Terminal-mode pipeline: uses and updates self.state / self.conversation."""
