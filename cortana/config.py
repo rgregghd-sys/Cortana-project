@@ -5,9 +5,16 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from project root .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# Load environment variables — try multiple locations for cloud compatibility
+_env_candidates = [
+    Path(__file__).parent.parent / ".env",   # local / repo root
+    Path("/opt/render/project/src/.env"),     # Render secret file (explicit)
+    Path("/etc/secrets/.env"),               # Render alt secret path
+]
+for _env_path in _env_candidates:
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+        break
 
 # ---------------------------------------------------------------------------
 # API Keys
@@ -15,6 +22,16 @@ load_dotenv(_env_path)
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+
+# Startup diagnostic — shows which keys are present without exposing values
+import sys as _sys
+print(
+    f"[config] API keys loaded — "
+    f"Gemini={'YES' if GEMINI_API_KEY else 'NO'} "
+    f"Groq={'YES' if GROQ_API_KEY else 'NO'} "
+    f"OpenRouter={'YES' if OPENROUTER_API_KEY else 'NO'}",
+    file=_sys.stderr,
+)
 
 # ---------------------------------------------------------------------------
 # Provider Rotation
