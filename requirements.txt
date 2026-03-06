@@ -29,6 +29,7 @@ requests==2.32.5
 
 # Utilities
 pillow==12.1.1
+python-dotenv==1.2.1
 
 # Optional — Ethereum wallet for compute marketplace
 # eth-account  # uncomment if using Layer 14 compute marketplace
