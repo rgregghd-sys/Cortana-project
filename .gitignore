@@ -36,6 +36,7 @@ agent_workspace/
 
 # ── Model weights (large binary files) ──────────────────────────────────────
 models/
+!cortana/models/
 *.gguf
 *.bin
 *.safetensors
