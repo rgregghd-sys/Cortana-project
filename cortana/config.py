@@ -81,9 +81,22 @@ LLAMA_MAX_TOKENS_SUB: int  = int(os.getenv("LLAMA_MAX_TOKENS_SUB",  "1024"))
 # Memory Paths
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent
-# CORTANA_DATA_DIR lets cloud deployments (Render, Railway) point to a
-# persistent volume so data survives container restarts.
-_DATA_DIR = Path(os.getenv("CORTANA_DATA_DIR", str(_PROJECT_ROOT)))
+# CORTANA_DATA_DIR lets cloud deployments point to a writable directory.
+# Falls back to /tmp/cortana_data if the configured path isn't writable.
+def _resolve_data_dir() -> Path:
+    candidate = Path(os.getenv("CORTANA_DATA_DIR", str(_PROJECT_ROOT)))
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        test = candidate / ".write_test"
+        test.touch()
+        test.unlink()
+        return candidate
+    except OSError:
+        fallback = Path("/tmp/cortana_data")
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+_DATA_DIR = _resolve_data_dir()
 CHROMA_PATH = str(_DATA_DIR / "aura_vault")
 SQLITE_PATH = str(_DATA_DIR / "cortana_memory.db")
 RESEARCH_DB_PATH = str(_DATA_DIR / "aura_prime.db")

@@ -30,7 +30,3 @@ services:
         value: "0.0.0.0"
       - key: PORT
         generateValue: false
-    disk:
-      name: cortana-data
-      mountPath: /data
-      sizeGB: 1
