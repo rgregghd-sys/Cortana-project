@@ -2,7 +2,7 @@
 Layer 2 — Memory (Hierarchical)
 Three-tier memory system:
   Tier 1 — Episodic   : SQLite timestamped interaction log (raw events)
-  Tier 2 — Semantic   : ChromaDB vector store (similarity recall)
+  Tier 2 — Semantic   : SQLite FTS5 full-text search over episodes
   Tier 3 — Conceptual : Logic matrix — concept nodes + relationship edges
                         Built from reflection output; grows smarter over time.
 
@@ -16,9 +16,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cortana.models.schemas import ConversationTurn
 
-import chromadb
-from chromadb.utils import embedding_functions
-
 from cortana import config
 
 
@@ -27,15 +24,7 @@ class CortanaMemory:
         self._lock = threading.Lock()
         self._working: Dict[str, Any] = {}
 
-        # Tier 2 — ChromaDB semantic store
-        self._chroma_client = chromadb.PersistentClient(path=config.CHROMA_PATH)
-        self._ef = embedding_functions.DefaultEmbeddingFunction()
-        self._collection = self._chroma_client.get_or_create_collection(
-            name="cortana_consciousness",
-            embedding_function=self._ef,
-        )
-
-        # Tiers 1 + 3 — SQLite (episodic + logic matrix)
+        # Tiers 1 + 2 + 3 — SQLite (episodic FTS + logic matrix)
         self._init_sqlite()
 
     # ------------------------------------------------------------------
@@ -51,6 +40,11 @@ class CortanaMemory:
                     source  TEXT    DEFAULT 'interaction',
                     stamp   DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
+            """)
+            # Tier 2 — FTS5 semantic index over episodes
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts
+                USING fts5(content, content='episodes', content_rowid='id')
             """)
             # Tier 3 — Concept nodes (logic matrix)
             conn.execute("""
@@ -167,22 +161,20 @@ class CortanaMemory:
     # Tier 1 + 2: Store an interaction (episodic + semantic)
     # ------------------------------------------------------------------
     def store(self, interaction: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Persist an interaction to ChromaDB (vector) and SQLite (episodic)."""
+        """Persist an interaction to SQLite episodic log and FTS index."""
         if metadata is None:
             metadata = {"source": "interaction"}
 
-        doc_id = f"id_{time.time()}"
-
         with self._lock:
-            self._collection.add(
-                documents=[interaction],
-                metadatas=[metadata],
-                ids=[doc_id],
-            )
             with sqlite3.connect(config.SQLITE_PATH) as conn:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO episodes (content, source) VALUES (?, ?)",
                     (interaction, metadata.get("source", "interaction")),
+                )
+                rowid = cur.lastrowid
+                conn.execute(
+                    "INSERT INTO episodes_fts(rowid, content) VALUES (?, ?)",
+                    (rowid, interaction),
                 )
                 conn.commit()
 
@@ -264,18 +256,26 @@ class CortanaMemory:
     # ------------------------------------------------------------------
     def recall(self, query: str, n_results: int = config.MAX_MEMORY_RECALL) -> List[str]:
         """
-        Semantic recall (Tier 2) + top conceptual matches (Tier 3).
-        Returns combined list, semantic results first.
+        Semantic recall (Tier 2 FTS) + top conceptual matches (Tier 3).
+        Returns combined list, FTS results first.
         """
         results: List[str] = []
 
-        # Tier 2 — ChromaDB semantic search
+        # Tier 2 — FTS5 full-text search over episodes
         try:
-            count = self._collection.count()
-            if count > 0:
-                n = min(n_results, count)
-                r = self._collection.query(query_texts=[query], n_results=n)
-                results.extend(d for d in r.get("documents", [[]])[0] if d)
+            # Sanitize query for FTS5 (strip special chars)
+            fts_query = " ".join(
+                w for w in query.split() if w.isalnum() or len(w) > 2
+            ) or query
+            with sqlite3.connect(config.SQLITE_PATH) as conn:
+                rows = conn.execute(
+                    """SELECT e.content FROM episodes_fts
+                       JOIN episodes e ON e.id = episodes_fts.rowid
+                       WHERE episodes_fts MATCH ?
+                       ORDER BY rank LIMIT ?""",
+                    (fts_query, n_results),
+                ).fetchall()
+            results.extend(r[0] for r in rows if r[0])
         except Exception:
             pass
 

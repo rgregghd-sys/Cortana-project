@@ -17,9 +17,7 @@ google-generativeai==0.8.6
 groq==1.0.0
 openai==2.24.0
 
-# Memory / vector store
-chromadb==1.5.2
-numpy==2.4.2
+# Memory — SQLite FTS5 (built-in, no extra deps needed)
 
 # Web search + scraping
 duckduckgo_search==8.1.1
