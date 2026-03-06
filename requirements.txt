@@ -27,6 +27,7 @@ requests==2.32.5
 
 # Utilities
 pillow==12.1.1
+rich==14.3.3
 python-dotenv==1.2.1
 
 # Optional — Ethereum wallet for compute marketplace
