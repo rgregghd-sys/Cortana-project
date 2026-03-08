@@ -201,14 +201,17 @@ _HTML = """<!DOCTYPE html>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#030a14;--border:rgba(0,185,255,0.13);
-  --blue:#00d8ff;--blue-dim:#0092cc;--dim:#2a5870;
-  --text:#b8d4e8;--green:#00ff9f;--yellow:#ffd050;--red:#ff5f5f;
+  --bg:#010408;--border:rgba(0,165,200,0.09);
+  --blue:#00b4d4;--blue-dim:#00527a;--dim:#1a3040;
+  --text:#6a9ab0;--green:#00c47a;--yellow:#c89600;--red:#d43838;
   --radius:12px;--font:'Inter','Segoe UI',system-ui,sans-serif;
   --mono:'JetBrains Mono','Fira Code',monospace;
   --chat-h:44vh;
+  --theme-glow:rgba(0,165,200,0.13);
+  --panel-bg:rgba(0,3,10,0.86);
 }
-html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);transition:background .8s,color .8s}
+*{transition:background-color .8s, border-color .8s, color .6s, box-shadow .8s}
 
 /* ── Full-screen 3D model mount ── */
 #faceMount{position:fixed;inset:0;z-index:0}
@@ -218,7 +221,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #searchPanel{
   position:fixed;left:18px;top:50%;transform:translateY(-50%);
   width:240px;max-height:360px;z-index:15;
-  background:rgba(0,18,36,0.88);border:1px solid rgba(0,185,255,0.22);
+  background:rgba(0,18,36,0.88);border:1px solid rgba(0,165,200,0.22);
   border-radius:12px;padding:12px 14px;font-family:var(--mono);font-size:10px;
   color:var(--text);display:none;backdrop-filter:blur(10px);
   transition:opacity .3s,transform .3s;overflow:hidden;
@@ -228,7 +231,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sp-pulse{width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0;animation:pulseA 1s infinite}
 .sp-pulse.done{background:var(--green);animation:none}
 .sp-query{color:var(--text);margin-bottom:7px;word-break:break-word;line-height:1.45}
-.sp-results{color:var(--dim);line-height:1.5;font-size:9.5px;max-height:220px;overflow-y:auto;border-top:1px solid rgba(0,185,255,0.10);padding-top:6px;display:none}
+.sp-results{color:var(--dim);line-height:1.5;font-size:9.5px;max-height:220px;overflow-y:auto;border-top:1px solid rgba(0,165,200,0.10);padding-top:6px;display:none}
 .sp-results.visible{display:block}
 
 /* ── Consciousness panel (left side, bottom) ── */
@@ -244,28 +247,28 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cs-header{display:flex;align-items:center;gap:7px;margin-bottom:8px;color:#b090ff;font-size:10px;font-weight:600;letter-spacing:.9px}
 .cs-pulse{width:5px;height:5px;border-radius:50%;background:#a070ff;flex-shrink:0;animation:pulseA 2s infinite}
 .cs-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px}
-.cs-stat{background:rgba(120,80,255,0.07);border:1px solid rgba(120,80,255,0.14);border-radius:6px;padding:4px 6px;text-align:center}
+.cs-stat{background:rgba(110,70,240,0.07);border:1px solid rgba(110,70,240,0.14);border-radius:6px;padding:4px 6px;text-align:center}
 .cs-stat-val{color:#d0b0ff;font-size:12px;font-weight:600;line-height:1.2}
 .cs-stat-lbl{color:var(--dim);font-size:7.5px;letter-spacing:.5px;margin-top:1px;text-transform:uppercase}
-.cs-admin-btn{background:rgba(0,185,255,0.08);color:var(--blue);border:1px solid rgba(0,185,255,0.25);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-family:var(--mono);letter-spacing:.05em;transition:background .2s}
-.cs-admin-btn:hover{background:rgba(0,185,255,0.18)}
-.cs-thoughts{font-size:9px;color:var(--dim);line-height:1.55;max-height:140px;overflow-y:auto;border-top:1px solid rgba(120,80,255,0.10);padding-top:6px}
-.cs-thought-item{padding:2px 0 3px;border-bottom:1px solid rgba(120,80,255,0.07);word-break:break-word}
+.cs-admin-btn{background:rgba(0,165,200,0.08);color:var(--blue);border:1px solid rgba(0,165,200,0.25);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-family:var(--mono);letter-spacing:.05em;transition:background .2s}
+.cs-admin-btn:hover{background:rgba(0,165,200,0.18)}
+.cs-thoughts{font-size:9px;color:var(--dim);line-height:1.55;max-height:140px;overflow-y:auto;border-top:1px solid rgba(110,70,240,0.10);padding-top:6px}
+.cs-thought-item{padding:2px 0 3px;border-bottom:1px solid rgba(110,70,240,0.07);word-break:break-word}
 .cs-thought-item:last-child{border-bottom:none}
 .cs-thought-item::before{content:'\25B8 ';color:#7050bb}
 #csPanelToggle{
-  padding:5px 9px;border-radius:7px;border:1px solid rgba(120,80,255,0.3);
-  background:rgba(120,80,255,0.08);color:#b090ff;font-family:var(--mono);
+  padding:5px 9px;border-radius:7px;border:1px solid rgba(110,70,240,0.3);
+  background:rgba(110,70,240,0.08);color:#b090ff;font-family:var(--mono);
   font-size:10px;cursor:pointer;transition:background .2s;letter-spacing:.5px;white-space:nowrap;
 }
-#csPanelToggle:hover{background:rgba(120,80,255,0.18)}
-#csPanelToggle.active{background:rgba(120,80,255,0.22);border-color:#a070ff}
+#csPanelToggle:hover{background:rgba(110,70,240,0.18)}
+#csPanelToggle.active{background:rgba(110,70,240,0.22);border-color:#a070ff}
 
 /* ── Webcam panel (floats right side) ── */
 #camPanel{
   position:fixed;right:18px;bottom:120px;
   width:220px;z-index:15;
-  background:rgba(0,18,36,0.88);border:1px solid rgba(0,185,255,0.22);
+  background:rgba(0,18,36,0.88);border:1px solid rgba(0,165,200,0.22);
   border-radius:12px;padding:10px;font-family:var(--mono);font-size:10px;
   color:var(--text);display:none;backdrop-filter:blur(10px);
 }
@@ -284,18 +287,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cam-label{font-size:8px;letter-spacing:2px;color:var(--dim);margin-bottom:5px;text-align:center}
 .cam-controls{display:flex;gap:6px;margin-top:8px}
 .cam-btn{flex:1;padding:5px 0;border-radius:7px;border:1px solid var(--border);
-  background:rgba(0,185,255,0.08);color:var(--blue);font-family:var(--mono);
+  background:rgba(0,165,200,0.08);color:var(--blue);font-family:var(--mono);
   font-size:9.5px;cursor:pointer;transition:background .2s}
-.cam-btn:hover{background:rgba(0,185,255,0.18)}
-.cam-btn.active{background:rgba(0,185,255,0.22);border-color:var(--blue)}
+.cam-btn:hover{background:rgba(0,165,200,0.18)}
+.cam-btn.active{background:rgba(0,165,200,0.22);border-color:var(--blue)}
 .cam-status{text-align:center;margin-top:6px;color:var(--dim);font-size:9px;min-height:12px}
 #camToggleBtn,#screenToggleBtn{
   padding:7px 12px;border-radius:8px;border:1px solid var(--border);
-  background:rgba(0,185,255,0.06);color:var(--blue);font-family:var(--mono);
+  background:rgba(0,165,200,0.06);color:var(--blue);font-family:var(--mono);
   font-size:11px;cursor:pointer;transition:background .2s;white-space:nowrap;
 }
-#camToggleBtn:hover,#screenToggleBtn:hover{background:rgba(0,185,255,0.15)}
-#camToggleBtn.active{border-color:var(--blue);background:rgba(0,185,255,0.18)}
+#camToggleBtn:hover,#screenToggleBtn:hover{background:rgba(0,165,200,0.15)}
+#camToggleBtn.active{border-color:var(--blue);background:rgba(0,165,200,0.18)}
 #screenToggleBtn.active{border-color:rgba(0,255,180,0.8);background:rgba(0,255,180,0.12);color:#00ffb4}
 
 /* ── DevAI proposal cards (admin only) ── */
@@ -357,21 +360,21 @@ header{
 #userBar.visible{display:flex}
 .user-tier{color:var(--blue);font-weight:600;text-transform:uppercase;font-size:10px}
 .hdr-btn{
-  background:rgba(0,185,255,0.07);border:1px solid var(--border);
+  background:rgba(0,165,200,0.07);border:1px solid var(--border);
   border-radius:7px;color:var(--blue);font-size:10px;font-family:var(--mono);
   cursor:pointer;padding:5px 11px;transition:background .15s,box-shadow .15s;
 }
-.hdr-btn:hover{background:rgba(0,185,255,0.18);box-shadow:0 0 10px rgba(0,185,255,0.12)}
+.hdr-btn:hover{background:rgba(0,165,200,0.18);box-shadow:0 0 10px rgba(0,165,200,0.12)}
 
 /* ── Hamburger / dropdown menu ── */
 .menu-wrap{position:relative}
 .menu-btn{
-  background:rgba(0,185,255,0.07);border:1px solid var(--border);
+  background:rgba(0,165,200,0.07);border:1px solid var(--border);
   border-radius:7px;color:var(--blue);font-size:15px;font-family:var(--mono);
   cursor:pointer;padding:4px 11px;line-height:1;
   transition:background .15s;user-select:none;
 }
-.menu-btn:hover{background:rgba(0,185,255,0.18)}
+.menu-btn:hover{background:rgba(0,165,200,0.18)}
 #dropMenu{
   display:none;position:absolute;top:calc(100% + 8px);left:0;
   min-width:190px;background:rgba(2,10,24,0.97);
@@ -386,7 +389,7 @@ header{
   cursor:pointer;transition:background .12s,color .12s;
   letter-spacing:.4px;
 }
-.drop-item:hover{background:rgba(0,185,255,0.10);color:var(--blue)}
+.drop-item:hover{background:rgba(0,165,200,0.10);color:var(--blue)}
 .drop-item.accent{color:var(--blue)}
 .drop-sep{height:1px;background:var(--border);margin:4px 0}
 
@@ -401,7 +404,7 @@ header{
   background:rgba(2,10,26,0.98);border:1px solid var(--border);
   border-radius:20px;margin:40px auto;padding:36px 40px;
   max-width:680px;width:94%;position:relative;
-  backdrop-filter:blur(28px);box-shadow:0 0 60px rgba(0,185,255,0.06);
+  backdrop-filter:blur(28px);box-shadow:0 0 60px rgba(0,165,200,0.06);
 }
 .op-close{
   position:absolute;top:14px;right:18px;background:none;border:none;
@@ -412,7 +415,7 @@ header{
 .op-title{
   color:var(--blue);font-weight:700;letter-spacing:2px;font-family:var(--mono);
   font-size:15px;margin-bottom:24px;
-  text-shadow:0 0 20px rgba(0,185,255,0.35);
+  text-shadow:0 0 20px rgba(0,165,200,0.35);
 }
 .op-section{margin-bottom:20px}
 .op-h{color:var(--blue);font-family:var(--mono);font-size:11px;letter-spacing:1.2px;
@@ -421,7 +424,7 @@ header{
 .op-faq-q{color:var(--blue);font-family:var(--mono);font-size:12px;font-weight:600;
   margin:18px 0 5px;cursor:pointer;letter-spacing:.3px}
 .op-faq-a{color:var(--text);font-size:13px;line-height:1.7;padding-left:12px;
-  border-left:2px solid rgba(0,185,255,0.22)}
+  border-left:2px solid rgba(0,165,200,0.22)}
 
 /* ── Chat overlay (fully transparent — 3D head shows through) ── */
 .chat-overlay{
@@ -440,9 +443,9 @@ header{
 }
 .chat-handle-pill{
   width:36px;height:3px;border-radius:2px;
-  background:rgba(0,185,255,0.22);transition:background .15s;
+  background:rgba(0,165,200,0.22);transition:background .15s;
 }
-.chat-handle:hover .chat-handle-pill{background:rgba(0,185,255,0.52)}
+.chat-handle:hover .chat-handle-pill{background:rgba(0,165,200,0.52)}
 
 /* ── Messages ── */
 #messages{
@@ -451,7 +454,7 @@ header{
   min-height:0;
 }
 #messages::-webkit-scrollbar{width:3px}
-#messages::-webkit-scrollbar-thumb{background:rgba(0,185,255,0.12);border-radius:2px}
+#messages::-webkit-scrollbar-thumb{background:rgba(0,165,200,0.12);border-radius:2px}
 .msg{display:flex;flex-direction:column;max-width:78%;gap:3px}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.cortana{align-self:flex-start;align-items:flex-start}
@@ -463,8 +466,8 @@ header{
   text-shadow:0 1px 6px rgba(0,0,0,1),0 0 20px rgba(0,0,0,0.95);
 }
 .msg.cortana .bubble{
-  background:rgba(0,185,255,0.03);
-  border:1px solid rgba(0,185,255,0.08);
+  background:rgba(0,165,200,0.03);
+  border:1px solid rgba(0,165,200,0.08);
 }
 .msg.user .bubble{
   background:rgba(0,60,140,0.08);
@@ -487,39 +490,39 @@ header{
 .input-area{
   display:flex;align-items:flex-end;gap:10px;
   padding:8px 18px 8px;flex-shrink:0;
-  background:rgba(0,5,18,0.55);
-  border-top:1px solid rgba(0,185,255,0.10);
+  background:rgba(0,3,12,0.72);
+  border-top:1px solid rgba(0,165,200,0.10);
   backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);
   position:relative;
 }
 #versionTag{
   position:absolute;bottom:calc(100% + 4px);right:18px;
-  font-size:10px;color:rgba(0,185,255,0.38);
+  font-size:10px;color:rgba(0,165,200,0.38);
   letter-spacing:.06em;pointer-events:none;white-space:nowrap;
   font-family:var(--font);
 }
 #input{
-  flex:1;background:rgba(0,10,28,0.55);color:var(--text);
-  border:1px solid rgba(0,185,255,0.18);border-radius:var(--radius);
+  flex:1;background:rgba(0,4,14,0.75);color:var(--text);
+  border:1px solid rgba(0,165,200,0.18);border-radius:var(--radius);
   padding:10px 15px;font-size:13.5px;font-family:var(--font);
   resize:none;max-height:110px;overflow-y:auto;outline:none;
   line-height:1.5;transition:border-color .2s,box-shadow .2s;
 }
 #input:focus{
   border-color:rgba(0,215,255,0.42);
-  box-shadow:0 0 18px rgba(0,185,255,0.08);
+  box-shadow:0 0 18px var(--theme-glow);
 }
 #input::placeholder{color:var(--dim)}
 #input:disabled{opacity:.45}
 #send{
   background:rgba(0,155,220,0.18);color:var(--blue);
-  border:1px solid rgba(0,185,255,0.3);border-radius:var(--radius);
+  border:1px solid rgba(0,165,200,0.3);border-radius:var(--radius);
   padding:10px 22px;font-size:13px;font-weight:600;cursor:pointer;
   transition:background .15s,box-shadow .15s;flex-shrink:0;
   letter-spacing:.5px;
 }
-#send:hover{background:rgba(0,185,255,0.30);box-shadow:0 0 14px rgba(0,185,255,0.12)}
+#send:hover{background:rgba(0,165,200,0.30);box-shadow:0 0 14px rgba(0,165,200,0.12)}
 #send:disabled{opacity:.32;cursor:default;box-shadow:none}
 
 /* ── Toast ── */
@@ -543,10 +546,10 @@ header{
 }
 #authModal.open{display:flex}
 .auth-box{
-  background:rgba(0,8,20,0.97);border:1px solid var(--border);border-radius:20px;
+  background:var(--panel-bg);border:1px solid var(--border);border-radius:20px;
   padding:30px 34px;width:370px;max-width:93vw;
   backdrop-filter:blur(28px);
-  box-shadow:0 0 60px rgba(0,185,255,0.07);
+  box-shadow:0 0 60px rgba(0,165,200,0.07);
   position:relative;
 }
 .auth-close{
@@ -558,7 +561,7 @@ header{
 .auth-title{
   color:var(--blue);font-weight:700;letter-spacing:2px;font-family:var(--mono);
   font-size:14px;margin-bottom:22px;text-align:center;
-  text-shadow:0 0 20px rgba(0,185,255,0.4);
+  text-shadow:0 0 20px rgba(0,165,200,0.4);
 }
 .auth-tabs{
   display:flex;margin-bottom:22px;border-radius:9px;overflow:hidden;
@@ -568,22 +571,22 @@ header{
   flex:1;padding:9px;background:none;border:none;color:var(--dim);
   cursor:pointer;font-size:12px;font-family:var(--mono);transition:all .15s;
 }
-.auth-tab.active{background:rgba(0,185,255,0.13);color:var(--blue)}
+.auth-tab.active{background:rgba(0,165,200,0.13);color:var(--blue)}
 .auth-field{margin-bottom:14px}
 .auth-field label{display:block;font-size:10px;color:var(--dim);margin-bottom:5px;font-family:var(--mono);letter-spacing:.8px;text-transform:uppercase}
 .auth-field input{
   width:100%;background:rgba(0,10,26,0.6);color:var(--text);
-  border:1px solid rgba(0,185,255,0.18);border-radius:9px;
+  border:1px solid rgba(0,165,200,0.18);border-radius:9px;
   padding:10px 13px;font-size:13px;outline:none;transition:border-color .2s;
 }
 .auth-field input:focus{border-color:rgba(0,215,255,0.42)}
 .auth-btn{
   width:100%;padding:11px;background:rgba(0,155,220,0.20);color:var(--blue);
-  border:1px solid rgba(0,185,255,0.32);border-radius:9px;font-size:13px;
+  border:1px solid rgba(0,165,200,0.32);border-radius:9px;font-size:13px;
   font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px;
   letter-spacing:.4px;
 }
-.auth-btn:hover{background:rgba(0,185,255,0.32)}
+.auth-btn:hover{background:rgba(0,165,200,0.32)}
 .auth-err{color:var(--red);font-size:11px;font-family:var(--mono);margin-top:10px;text-align:center;min-height:16px}
 .auth-skip{
   display:block;text-align:center;color:var(--dim);font-size:11px;
@@ -605,11 +608,11 @@ header{
 #changePwdModal.open{display:flex}
 .tier-btn{
   display:block;width:100%;padding:9px 13px;margin-bottom:8px;
-  background:rgba(0,185,255,0.04);border:1px solid var(--border);border-radius:9px;
+  background:rgba(0,165,200,0.04);border:1px solid var(--border);border-radius:9px;
   color:var(--text);text-align:left;font-size:12px;cursor:pointer;
   transition:background .15s;font-family:var(--mono);
 }
-.tier-btn:hover{background:rgba(0,185,255,0.11)}
+.tier-btn:hover{background:rgba(0,165,200,0.11)}
 .tier-btn span{color:var(--blue);font-weight:700;float:right}
 
 /* ── Graph modal ── */
@@ -618,9 +621,9 @@ header{
   z-index:100;align-items:center;justify-content:center;
 }
 .graph-inner{
-  background:rgba(0,8,20,0.97);border:1px solid var(--border);border-radius:20px;
+  background:var(--panel-bg);border:1px solid var(--border);border-radius:20px;
   padding:24px;max-width:680px;width:90%;max-height:80vh;overflow-y:auto;
-  backdrop-filter:blur(24px);box-shadow:0 0 60px rgba(0,185,255,0.06);
+  backdrop-filter:blur(24px);box-shadow:0 0 60px rgba(0,165,200,0.06);
 }
 .graph-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .graph-title{color:var(--blue);font-weight:700;letter-spacing:1.5px;font-family:var(--mono);font-size:12px;text-transform:uppercase}
@@ -669,11 +672,11 @@ header{
     <div class="cs-stat"><div class="cs-stat-val" id="csInteractions">—</div><div class="cs-stat-lbl">Talks</div></div>
     <div class="cs-stat"><div class="cs-stat-val" id="csThoughts">—</div><div class="cs-stat-lbl">Thoughts</div></div>
   </div>
-  <div class="cs-thoughts" id="csThoughtsList"><span style="color:rgba(120,80,255,0.4)">Initialising stream...</span></div>
-  <div class="cs-stat-lbl" style="margin-top:6px;padding-top:4px;border-top:1px solid rgba(120,80,255,0.10)">ACTIVE GOALS</div>
-  <div class="cs-thoughts" id="csGoals"><span style="color:rgba(120,80,255,0.4)">Loading goals...</span></div>
+  <div class="cs-thoughts" id="csThoughtsList"><span style="color:rgba(110,70,240,0.4)">Initialising stream...</span></div>
+  <div class="cs-stat-lbl" style="margin-top:6px;padding-top:4px;border-top:1px solid rgba(110,70,240,0.10)">ACTIVE GOALS</div>
+  <div class="cs-thoughts" id="csGoals"><span style="color:rgba(110,70,240,0.4)">Loading goals...</span></div>
   <div class="cs-stat-lbl" style="margin-top:4px" id="csWMStats"></div>
-  <div id="csAdminBar" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,185,255,0.12)">
+  <div id="csAdminBar" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,165,200,0.12)">
     <button class="cs-admin-btn" id="csRestartBtn" title="Soft-restart service">&#x21BB; Restart</button>
   </div>
 </div>
@@ -742,7 +745,7 @@ header{
       </div>
       <div class="auth-field"><label>Username or Email</label><input id="forgotVal" type="text" autocomplete="off"></div>
       <button class="auth-btn" onclick="doForgot()">Generate Reset Token</button>
-      <div id="forgotToken" style="display:none;margin-top:14px;padding:10px 13px;background:rgba(0,185,255,0.06);border:1px solid var(--border);border-radius:9px;font-family:var(--mono);font-size:11px;word-break:break-all;color:var(--blue)"></div>
+      <div id="forgotToken" style="display:none;margin-top:14px;padding:10px 13px;background:rgba(0,165,200,0.06);border:1px solid var(--border);border-radius:9px;font-family:var(--mono);font-size:11px;word-break:break-all;color:var(--blue)"></div>
       <div id="formReset" style="display:none;margin-top:14px">
         <div class="auth-field"><label>Reset Token</label><input id="resetToken" type="text" autocomplete="off"></div>
         <div class="auth-field"><label>New Password</label><input id="resetPwd" type="password" autocomplete="new-password"></div>
@@ -1422,10 +1425,10 @@ function showSubscribeForm(tier){
     `Send <b>${info.price_eth||'see /api/v1/wallet'} ETH</b> to:<br>`+
     `<span style="font-size:9px;word-break:break-all;color:var(--text)">${_payWallet||'(loading\u2026)'}</span><br><br>`+
     `<input id="subTxHash" placeholder="Paste ETH tx hash (0x\u2026)" `+
-    `style="width:100%;padding:5px 8px;background:rgba(0,185,255,0.06);border:1px solid var(--border);`+
+    `style="width:100%;padding:5px 8px;background:rgba(0,165,200,0.06);border:1px solid var(--border);`+
     `border-radius:6px;color:var(--text);font-family:var(--mono);font-size:10px;margin-bottom:6px"><br>`+
     `<button onclick="submitSubscription('${tier}')" `+
-    `style="width:100%;padding:6px;background:rgba(0,185,255,0.12);border:1px solid var(--border);`+
+    `style="width:100%;padding:6px;background:rgba(0,165,200,0.12);border:1px solid var(--border);`+
     `border-radius:6px;color:var(--blue);font-family:var(--mono);font-size:10px;cursor:pointer">`+
     `Activate ${label}</button>`;
 }
@@ -2132,6 +2135,127 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
 
   fetchConsciousness();
   setInterval(fetchConsciousness, 30000);
+})();
+
+// ═══════════════════════════════════════════════════════════════
+// TIME-OF-DAY ADAPTIVE THEME ENGINE
+// Palette shifts with the real clock — always dark, but tonally alive.
+// Rechecks every 60 seconds and transitions smoothly.
+// ═══════════════════════════════════════════════════════════════
+(function initTheme(){
+  const THEMES = [
+    // hour range [start, end), name, css vars
+    { name:'deep-night',  h:[0,5],  vars:{
+        '--bg':'#010307',
+        '--blue':'#0099bb',    '--blue-dim':'#004a5e',
+        '--dim':'#112030',     '--text':'#486a7a',
+        '--border':'rgba(0,153,187,0.08)',
+        '--green':'#00aa6a',   '--yellow':'#b07800', '--red':'#b83030',
+        '--theme-glow':'rgba(0,153,187,0.12)',
+        '--panel-bg':'rgba(0,2,8,0.88)',
+    }},
+    { name:'dawn',        h:[5,7],  vars:{
+        '--bg':'#060204',
+        '--blue':'#d06820',    '--blue-dim':'#7a3808',
+        '--dim':'#3a1808',     '--text':'#8a6040',
+        '--border':'rgba(208,104,32,0.10)',
+        '--green':'#a07020',   '--yellow':'#d09020', '--red':'#d04040',
+        '--theme-glow':'rgba(208,104,32,0.14)',
+        '--panel-bg':'rgba(8,2,0,0.90)',
+    }},
+    { name:'morning',     h:[7,11], vars:{
+        '--bg':'#010810',
+        '--blue':'#00c4e0',    '--blue-dim':'#005f7a',
+        '--dim':'#183850',     '--text':'#5898b0',
+        '--border':'rgba(0,196,224,0.10)',
+        '--green':'#00c078',   '--yellow':'#c09000', '--red':'#cc3c3c',
+        '--theme-glow':'rgba(0,196,224,0.14)',
+        '--panel-bg':'rgba(0,4,14,0.85)',
+    }},
+    { name:'midday',      h:[11,15], vars:{
+        '--bg':'#010508',
+        '--blue':'#00b4d4',    '--blue-dim':'#005570',
+        '--dim':'#1a3040',     '--text':'#6a9ab0',
+        '--border':'rgba(0,180,212,0.10)',
+        '--green':'#00c47a',   '--yellow':'#c89600', '--red':'#d43838',
+        '--theme-glow':'rgba(0,180,212,0.14)',
+        '--panel-bg':'rgba(0,3,10,0.86)',
+    }},
+    { name:'afternoon',   h:[15,18], vars:{
+        '--bg':'#030409',
+        '--blue':'#8060d0',    '--blue-dim':'#3a2060',
+        '--dim':'#22183a',     '--text':'#6a5898',
+        '--border':'rgba(128,96,208,0.10)',
+        '--green':'#00b070',   '--yellow':'#b08000', '--red':'#c83838',
+        '--theme-glow':'rgba(128,96,208,0.14)',
+        '--panel-bg':'rgba(2,1,10,0.88)',
+    }},
+    { name:'dusk',        h:[18,20], vars:{
+        '--bg':'#060204',
+        '--blue':'#c05830',    '--blue-dim':'#702010',
+        '--dim':'#3a1a10',     '--text':'#906050',
+        '--border':'rgba(192,88,48,0.10)',
+        '--green':'#909020',   '--yellow':'#c07018', '--red':'#d03030',
+        '--theme-glow':'rgba(192,88,48,0.15)',
+        '--panel-bg':'rgba(6,1,0,0.92)',
+    }},
+    { name:'evening',     h:[20,22], vars:{
+        '--bg':'#020108',
+        '--blue':'#6040b8',    '--blue-dim':'#30186a',
+        '--dim':'#201440',     '--text':'#5a4888',
+        '--border':'rgba(96,64,184,0.09)',
+        '--green':'#00a868',   '--yellow':'#a07800', '--red':'#c83030',
+        '--theme-glow':'rgba(96,64,184,0.13)',
+        '--panel-bg':'rgba(2,0,8,0.90)',
+    }},
+    { name:'late-night',  h:[22,24], vars:{
+        '--bg':'#010307',
+        '--blue':'#0099bb',    '--blue-dim':'#004a5e',
+        '--dim':'#112030',     '--text':'#486a7a',
+        '--border':'rgba(0,153,187,0.08)',
+        '--green':'#00aa6a',   '--yellow':'#b07800', '--red':'#b83030',
+        '--theme-glow':'rgba(0,153,187,0.12)',
+        '--panel-bg':'rgba(0,2,8,0.88)',
+    }},
+  ];
+
+  function getTheme(h){
+    for(const t of THEMES){
+      if(h>=t.h[0] && h<t.h[1]) return t;
+    }
+    return THEMES[0];
+  }
+
+  function applyTheme(t){
+    const root = document.documentElement;
+    for(const[k,v] of Object.entries(t.vars)){
+      root.style.setProperty(k, v);
+    }
+    // Update theme name badge if shown
+    const badge = document.getElementById('themeBadge');
+    if(badge) badge.textContent = t.name;
+    // Nudge Three.js head color if available
+    if(window._setNexusThemeColor){
+      try{ window._setNexusThemeColor(t.vars['--blue']); }catch(e){}
+    }
+  }
+
+  let _lastTheme = '';
+  function tick(){
+    const h = new Date().getHours();
+    const t = getTheme(h);
+    if(t.name !== _lastTheme){
+      applyTheme(t);
+      _lastTheme = t.name;
+    }
+  }
+
+  tick();
+  setInterval(tick, 60000);
+
+  // Expose for external callers (e.g. manual override)
+  window._applyTheme = applyTheme;
+  window._getTheme  = ()=> getTheme(new Date().getHours());
 })();
 
 connect();
