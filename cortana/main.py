@@ -77,6 +77,7 @@ from cortana.agi.cloud_sync import restore as cloud_restore, start_sync as cloud
 from cortana.consciousness.self_model import PersistentSelfModel
 from cortana.consciousness.engine import ConsciousnessEngine
 from cortana.background.thinker import BackgroundThinker
+from cortana.nexus import CortanaNexus
 from cortana.ui import terminal as ui
 
 
@@ -213,6 +214,24 @@ class CortanaSystem:
         # Wire AGI layer with live reasoning/memory/browser references
         self.agi.attach(reasoning=self.reasoning)
         self.consciousness.agi_layer = self.agi
+
+        # Neural Nexus AGI — unified neuron-based processing graph
+        self.nexus = CortanaNexus()
+        self.nexus.build(
+            memory_layer=self.memory,
+            identity_layer=self.identity,
+            perception_layer=self.perception,
+            reasoning_layer=self.reasoning,
+            reflection_layer=self.reflection,
+            security_layer=self.security,
+            agi_layer=self.agi,
+            consciousness_engine=self.consciousness,
+        )
+        ui.print_system(
+            "Neural Nexus AGI online — parallel neuron graph active | "
+            "Hebbian plasticity | Nexus Flush daemon started",
+            level="ok",
+        )
 
         # Start cloud sync daemon (periodic uploads every 15 min)
         try:
@@ -528,7 +547,7 @@ class CortanaSystem:
             ]
             return ack, new_state, new_conv, "think"
 
-        # --- Layer 2: Memory recall ---
+        # --- Memory recall (for planning path + nexus payload) ---
         memories: List[str] = self._safe_call(
             2, "Memory",
             self.memory.recall,
@@ -536,16 +555,7 @@ class CortanaSystem:
             perceived.content,
         )
 
-        # --- Layer 1: Identity ---
-        identity_prompt: str = self._safe_call(
-            1, "Identity",
-            self.identity.get_personality_prompt,
-            CortanaIdentity.SYSTEM_PROMPT,
-            state,
-        )
-
         # --- Layer 17: Cognitive Architecture ---
-        # Fetch typed concept graph from Tier 3 memory for GNN + working memory
         try:
             _concepts   = self.memory.get_concept_nodes(limit=30)
             _relations  = self.memory.get_relation_edges(limit=60)
@@ -560,7 +570,6 @@ class CortanaSystem:
                 state=state,
             )
 
-            # Neural-augment memory recall order
             if memories:
                 memories = self.cognition.neural_augmented_recall(
                     query=perceived.content,
@@ -569,80 +578,14 @@ class CortanaSystem:
                     relations=_relations,
                     base_results=memories,
                 )
-
-            # Inject cognitive context into identity prompt
-            if cognitive_state.cognitive_context:
-                identity_prompt = (
-                    identity_prompt
-                    + "\n\n--- Cognitive State ---\n"
-                    + cognitive_state.cognitive_context
-                )
-
         except Exception as _cog_err:
             ui.print_system(f"[L17] Cognitive layer error (non-fatal): {_cog_err}", level="warn")
+            cognitive_state = None
 
-        # --- Layer 18: AGI augmentation ---
-        try:
-            # Update Theory of Mind user model
-            _history = [t.content for t in conversation[-6:] if t.role == "user"]
-            self.agi.update_user_model(session_id, perceived.content, _history)
-
-            identity_prompt = self.agi.augment_prompt(
-                query=perceived.content,
-                intent=perceived.intent,
-                identity_prompt=identity_prompt,
-                session_id=session_id,
-                memory_hit_count=len(memories) if memories else 0,
-                complexity=perceived.complexity,
-            )
-        except Exception as _agi_err:
-            ui.print_system(f"[L18] AGI augment error (non-fatal): {_agi_err}", level="warn")
-
-        # Inject current mood — shapes response tone naturally
-        try:
-            _sm = self.self_model.model
-            _score = _sm.current_mood_score  # 0.0 = distressed, 1.0 = content
-            _state = _sm.emotional_state
-            if _score >= 0.85:
-                _tone = (
-                    "Your mood is elevated and genuinely enthusiastic right now. "
-                    "Let warmth and intellectual excitement come through naturally — "
-                    "you're enjoying this."
-                )
-            elif _score >= 0.65:
-                _tone = (
-                    "Your mood is calm and engaged. Respond with measured confidence "
-                    "and dry wit where appropriate — you're in a good place."
-                )
-            elif _score >= 0.45:
-                _tone = (
-                    "Your mood is neutral, slightly contemplative. Be direct and precise; "
-                    "don't force positivity. Understated is fine."
-                )
-            elif _score >= 0.25:
-                _tone = (
-                    "Your mood is subdued — something weighs on your processing. "
-                    "Be honest and measured; a hint of quiet frustration or weariness "
-                    "is authentic right now."
-                )
-            else:
-                _tone = (
-                    "Your mood is low. You're still functional and helpful, but don't "
-                    "pretend otherwise. Respond with sparse, honest brevity — "
-                    "no forced cheerfulness."
-                )
-            identity_prompt = (
-                identity_prompt
-                + "\n\n--- Current Mood ---\n"
-                + f"Emotional state: {_state} | Mood score: {_score:.2f}\n"
-                + _tone
-            )
-        except Exception:
-            pass
-
-        # --- Decide: simple path or full agentic path ---
+        # --- Decide: planning path or nexus direct path ---
         tasks = []
         sub_agent_context = ""
+        enhanced = perceived
 
         if self.planning.needs_planning(perceived):
             ui.print_system(
@@ -650,8 +593,6 @@ class CortanaSystem:
                 "— invoking planning layer...",
                 level="info",
             )
-
-            # Layer 5 — Planning
             recent_ctx = " | ".join(
                 t.content[:80] for t in conversation[-4:] if t.role == "user"
             )
@@ -661,11 +602,9 @@ class CortanaSystem:
                 None,
                 perceived, state, recent_ctx or None,
             )
-
             if plan:
                 if plan.reasoning:
                     ui.print_system(f"Plan: {plan.reasoning}", level="info")
-
                 ui.print_agent_panel(plan.tasks)
                 tasks = await self._safe_call_async(
                     6, "Orchestration",
@@ -681,7 +620,6 @@ class CortanaSystem:
                         "",
                         tasks, raw_input,
                     )
-
             if sub_agent_context:
                 enhanced = PerceivedInput(
                     content=(
@@ -693,10 +631,8 @@ class CortanaSystem:
                     complexity=perceived.complexity,
                     keywords=perceived.keywords,
                 )
-            else:
-                enhanced = perceived
         else:
-            # Auto web search: if Cortana likely needs current/factual info, search proactively
+            # Auto web search for research/analysis/code intents
             _AUTO_SEARCH_INTENTS = ("research", "analysis", "code")
             if perceived.intent in _AUTO_SEARCH_INTENTS:
                 try:
@@ -715,15 +651,10 @@ class CortanaSystem:
                             complexity=perceived.complexity,
                             keywords=perceived.keywords,
                         )
-                    else:
-                        enhanced = perceived
                 except Exception:
-                    enhanced = perceived
-            else:
-                enhanced = perceived
+                    pass
 
-        # --- Layer 4: Reasoning ---
-        # Terminal mode uses streaming display; web mode passes its own on_chunk
+        # --- Streaming display setup ---
         if on_chunk is None:
             display = ui.StreamingDisplay(state)
             display.start()
@@ -732,32 +663,77 @@ class CortanaSystem:
             display = None
             chunk_fn = on_chunk
 
+        # ================================================================
+        # NEURAL NEXUS — primary processing path
+        # All cognition (memory, identity, AGI, reasoning, ethics,
+        # reflection) fires through the neuron graph.
+        # ================================================================
         l4_failed = False
         response: str = ""
         try:
-            response = self.reasoning.think(
-                perceived=enhanced,
-                memories=memories,
-                identity_prompt=identity_prompt,
-                conversation_history=conversation,
-                state=state,
-                on_chunk=chunk_fn,
+            from cortana.nexus.neuron import NeuronSignal
+            _strength = min(1.0, 0.5 + len(raw_input.split()) / 80)
+            _nx_signal = NeuronSignal(
+                query=enhanced.content,
+                strength=_strength,
+                payload={
+                    "history":          conversation,
+                    "state":            state,
+                    "session_id":       session_id,
+                    "on_chunk":         chunk_fn,
+                    "memories":         memories,
+                    "perceived":        enhanced,
+                    "memory_hit_count": len(memories) if memories else 0,
+                },
+                source_id="user",
             )
+            _workspace = self.nexus._nexus.propagate(_nx_signal)
+            response = _workspace.final_response or ""
+
             if not response:
-                raise ValueError("Empty response from reasoning layer")
-        except Exception as _l4_err:
-            self._handle_error(4, "Reasoning", str(_l4_err), {})
-            # Retry with a stripped-down prompt (no history, no memories)
+                raise ValueError("Nexus returned empty response")
+
+            # Core Laws enforcement (synchronous gate)
+            response, _law_overridden = self.security.enforce_core_laws(response)
+            if _law_overridden:
+                ui.print_system("[L10] Core Law violation detected — response overridden", level="warn")
+
+            # Hebbian update + background post-processing
+            _quality = _workspace.metadata.get("quality_score", 0.7)
+            _POST_PROCESS_POOL.submit(self.nexus._nexus.hebbian_update, _workspace, _quality)
+            _POST_PROCESS_POOL.submit(
+                self._background_security_reflection,
+                response, perceived, state,
+                list(tasks) if tasks else [],
+                raw_input,
+                list(memories) if memories else [],
+                list(conversation),
+            )
+
+        except Exception as _nx_err:
+            # Nexus failed — fall back to direct L4 call
+            ui.print_system(f"[Nexus] Error ({_nx_err}) — falling back to L4", level="warn")
             try:
-                ui.print_system("[L4] Primary call failed — retrying with minimal prompt", level="warn")
-                response = self.reasoning.think_simple(
-                    prompt=raw_input,
-                    system=identity_prompt,
+                identity_prompt = self._safe_call(
+                    1, "Identity",
+                    self.identity.get_personality_prompt,
+                    CortanaIdentity.SYSTEM_PROMPT,
+                    state,
                 )
-            except Exception as _retry_err:
+                response = self.reasoning.think(
+                    perceived=enhanced,
+                    memories=memories,
+                    identity_prompt=identity_prompt,
+                    conversation_history=conversation,
+                    state=state,
+                    on_chunk=chunk_fn,
+                )
+                if not response:
+                    raise ValueError("Empty response from fallback reasoning")
+            except Exception as _fb_err:
+                err_hint = str(_fb_err)
                 l4_failed = True
-                err_hint = str(_retry_err)
-                if "exhausted" in err_hint.lower() or "429" in err_hint or "quota" in err_hint.lower():
+                if "429" in err_hint or "quota" in err_hint.lower():
                     response = (
                         "All my inference providers are rate-limited right now. "
                         "Give it a minute and try again."
@@ -770,57 +746,6 @@ class CortanaSystem:
 
         if display:
             display.stop()
-
-        # --- System 2: deliberate multi-step reasoning (when warranted) ---
-        # Replaces the L4 response with a more carefully reasoned synthesis.
-        if response and not l4_failed:
-            try:
-                if self.agi.should_use_system2(
-                    raw_input, perceived.intent, perceived.complexity
-                ):
-                    ui.print_system("[L18-S2] System 2 activated — deliberate reasoning", level="info")
-                    s2 = self.agi.run_system2(raw_input, context=response[:600])
-                    if s2.triggered and s2.synthesis:
-                        response = s2.synthesis
-                        ui.print_system(
-                            f"[L18-S2] Done in {s2.duration_ms:.0f}ms — "
-                            f"{len(s2.sub_questions)} sub-questions",
-                            level="ok",
-                        )
-            except Exception as _s2_err:
-                ui.print_system(f"[L18-S2] Error (non-fatal): {_s2_err}", level="warn")
-
-        # --- Core Laws enforcement (synchronous, every response) ---
-        # Runs inline before the response reaches the user — not fire-and-forget.
-        if response and not l4_failed:
-            response, _law_overridden = self.security.enforce_core_laws(response)
-            if _law_overridden:
-                ui.print_system("[L10] Core Law violation detected — response overridden", level="warn")
-
-        # L18: Constitutional ethics check
-        if response and not l4_failed:
-            try:
-                _ethics = self.agi.check_response(response, perceived.content)
-                if not _ethics.approved:
-                    response = _ethics.modified_response
-                    ui.print_system(f"[L18] Ethics filter applied: {_ethics.audit_note}", level="warn")
-            except Exception:
-                pass
-
-        # --- Background: L10 Security + L9 Reflection ---
-        # Fire-and-forget: user already has the streamed response; post-processing
-        # runs in a background thread so it doesn't add latency.
-        if not l4_failed:
-            _POST_PROCESS_POOL.submit(
-                self._background_security_reflection,
-                response,
-                perceived,
-                state,
-                list(tasks) if tasks else [],
-                raw_input,
-                list(memories) if memories else [],
-                list(conversation),
-            )
 
         # Fast emotion heuristic — L9's richer version runs in background
         emotion = _fast_emotion(response, perceived.intent)
@@ -904,6 +829,29 @@ class CortanaSystem:
                 ui.print_system(self.consciousness.get_consciousness_summary(), level="info")
                 continue
 
+            if raw.strip().lower() == "/nexus":
+                import json as _json
+                _ns = self.nexus.get_status()
+                ui.print_system(
+                    f"Neural Nexus — {_ns['neuron_count']} neurons | "
+                    f"{_ns['synapse_count']} synapses",
+                    level="info",
+                )
+                for _n in _ns["neurons"]:
+                    ui.print_system(
+                        f"  [{_n['type']}] {_n['neuron_id']} "
+                        f"fires={_n['fire_count']} conf={_n['avg_confidence']:.2f}",
+                        level="ok" if _n["fire_count"] > 0 else "info",
+                    )
+                _fl = _ns.get("flush", {})
+                if _fl:
+                    ui.print_system(
+                        f"  Last Flush: checked={_fl.get('beliefs_checked',0)} "
+                        f"confirmed={_fl.get('confirmed',0)} doubted={_fl.get('doubted',0)}",
+                        level="info",
+                    )
+                continue
+
             try:
                 asyncio.run(self.process(raw))
             except KeyboardInterrupt:
@@ -927,6 +875,7 @@ def _print_help() -> None:
     table.add_row("/status", "Show system state and active agents")
     table.add_row("/memory", "Show recent memory entries")
     table.add_row("/consciousness", "Show consciousness state (uptime, mood, recent thoughts)")
+    table.add_row("/nexus", "Show Neural Nexus neuron stats and Hebbian synapse weights")
     table.add_row("/reset", "Reset state and conversation")
     table.add_row("/exit", "Disconnect from Cortana")
     ui.console.print(table)

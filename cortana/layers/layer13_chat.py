@@ -247,6 +247,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cs-stat{background:rgba(120,80,255,0.07);border:1px solid rgba(120,80,255,0.14);border-radius:6px;padding:4px 6px;text-align:center}
 .cs-stat-val{color:#d0b0ff;font-size:12px;font-weight:600;line-height:1.2}
 .cs-stat-lbl{color:var(--dim);font-size:7.5px;letter-spacing:.5px;margin-top:1px;text-transform:uppercase}
+.cs-admin-btn{background:rgba(0,185,255,0.08);color:var(--blue);border:1px solid rgba(0,185,255,0.25);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-family:var(--mono);letter-spacing:.05em;transition:background .2s}
+.cs-admin-btn:hover{background:rgba(0,185,255,0.18)}
 .cs-thoughts{font-size:9px;color:var(--dim);line-height:1.55;max-height:140px;overflow-y:auto;border-top:1px solid rgba(120,80,255,0.10);padding-top:6px}
 .cs-thought-item{padding:2px 0 3px;border-bottom:1px solid rgba(120,80,255,0.07);word-break:break-word}
 .cs-thought-item:last-child{border-bottom:none}
@@ -484,11 +486,18 @@ header{
 /* ── Input bar ── */
 .input-area{
   display:flex;align-items:flex-end;gap:10px;
-  padding:8px 18px 14px;flex-shrink:0;
+  padding:8px 18px 8px;flex-shrink:0;
   background:rgba(0,5,18,0.55);
   border-top:1px solid rgba(0,185,255,0.10);
   backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);
+  position:relative;
+}
+#versionTag{
+  position:absolute;bottom:calc(100% + 4px);right:18px;
+  font-size:10px;color:rgba(0,185,255,0.38);
+  letter-spacing:.06em;pointer-events:none;white-space:nowrap;
+  font-family:var(--font);
 }
 #input{
   flex:1;background:rgba(0,10,28,0.55);color:var(--text);
@@ -664,6 +673,9 @@ header{
   <div class="cs-stat-lbl" style="margin-top:6px;padding-top:4px;border-top:1px solid rgba(120,80,255,0.10)">ACTIVE GOALS</div>
   <div class="cs-thoughts" id="csGoals"><span style="color:rgba(120,80,255,0.4)">Loading goals...</span></div>
   <div class="cs-stat-lbl" style="margin-top:4px" id="csWMStats"></div>
+  <div id="csAdminBar" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,185,255,0.12)">
+    <button class="cs-admin-btn" id="csRestartBtn" title="Soft-restart service">&#x21BB; Restart</button>
+  </div>
 </div>
 
 <!-- Floating header -->
@@ -793,6 +805,7 @@ header{
     <button id="screenToggleBtn" title="Share screen with Cortana">&#x1F5A5;</button>
     <button id="send" disabled>Send</button>
   </div>
+  <div id="versionTag">v2.1.0 &mdash; Neural Nexus AGI</div>
 </div>
 
 <!-- Webcam panel -->
@@ -1702,6 +1715,11 @@ function connect(){
         clearTimeout(window._spTimer);
         window._spTimer=setTimeout(()=>document.getElementById('searchPanel').classList.remove('visible'),6000);
         break;}
+      case 'cortana_reload':
+        // Server-initiated soft page reload (e.g. after admin restart)
+        addNote('\u21BB Cortana is restarting — reconnecting in 5s...');
+        setTimeout(()=>window.location.reload(), 5000);
+        break;
       case 'security_alert':
         addNote('\u26A0 Security: '+msg.detail);
         triggerExpression('surprised'); break;
@@ -2078,6 +2096,31 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
       .catch(()=>{});
   }
 
+  // Restart button (shown only to admins)
+  const csRestartBtn = document.getElementById('csRestartBtn');
+  const csAdminBar   = document.getElementById('csAdminBar');
+  if(csRestartBtn){
+    csRestartBtn.addEventListener('click', ()=>{
+      const tok = localStorage.getItem('cx_session_token') || '';
+      if(!tok){ alert('Admin login required'); return; }
+      if(!confirm('Restart the Cortana service now? All clients will reload in ~5s.')) return;
+      fetch('/api/admin/restart', {method:'POST', headers:{'X-Session-Token':tok}})
+        .then(r=>r.json()).then(d=>{ if(d.ok) addNote('\u21BB Restart initiated — reloading soon...'); })
+        .catch(()=>alert('Restart failed'));
+    });
+  }
+
+  // Show admin bar if logged in as admin
+  function _maybeShowAdminBar(){
+    const tok = localStorage.getItem('cx_session_token') || '';
+    if(!tok || !csAdminBar) return;
+    fetch('/api/auth/me', {headers:{'X-Session-Token':tok}})
+      .then(r=>r.ok?r.json():null)
+      .then(u=>{ if(u && u.tier==='admin') csAdminBar.style.display='block'; })
+      .catch(()=>{});
+  }
+  _maybeShowAdminBar();
+
   if(toggle && panel){
     toggle.addEventListener('click',()=>{
       visible = !visible;
@@ -2210,6 +2253,22 @@ class ChatLayer:
                 if not prompt:
                     return JSONResponse(status_code=400, content={"error": "prompt required"})
                 return self.system.agi.validate_prompt(prompt)
+            except Exception as exc:
+                return JSONResponse(status_code=503, content={"error": str(exc)})
+
+        @app.get("/api/nexus/status")
+        async def api_nexus_status():
+            """Neural Nexus neuron stats and synapse weights."""
+            try:
+                return self.system.nexus.get_status()
+            except Exception as exc:
+                return JSONResponse(status_code=503, content={"error": str(exc)})
+
+        @app.get("/api/nexus/flush")
+        async def api_nexus_flush_logs():
+            """Recent Nexus Flush belief-validation logs."""
+            try:
+                return {"logs": self.system.nexus.recent_flush_logs(limit=10)}
             except Exception as exc:
                 return JSONResponse(status_code=503, content={"error": str(exc)})
 
@@ -2404,6 +2463,52 @@ class ChatLayer:
                 return JSONResponse(status_code=403, content={"error": "Admin only"})
             lockdown_file = Path(config.AGENT_WORKSPACE) / ".lockdown"
             return {"lockdown": lockdown_file.exists()}
+
+        # ── Restart / reload ──
+
+        @app.post("/api/admin/restart")
+        async def admin_restart(request: Request):
+            """
+            Soft-restart: broadcast reload event to all clients, then SIGHUP
+            the process (graceful reload on Render/gunicorn).
+            Falls back to SIGTERM. Admin only.
+            """
+            from cortana import auth as _auth
+            import os, signal as _signal, threading as _threading
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+
+            # Notify all clients to reload their page in 5s
+            try:
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(
+                    self.manager.broadcast({"type": "cortana_reload"}), loop
+                )
+            except Exception:
+                pass
+
+            def _do_restart():
+                import time as _time
+                _time.sleep(3.0)
+                try:
+                    os.kill(os.getpid(), _signal.SIGHUP)
+                except (AttributeError, OSError):
+                    os.kill(os.getpid(), _signal.SIGTERM)
+
+            _threading.Thread(target=_do_restart, daemon=True).start()
+            return {"ok": True, "message": "Restart initiated — clients notified"}
+
+        @app.get("/api/version")
+        async def get_version():
+            """Return current build version (public)."""
+            return {
+                "version":     "2.1.0",
+                "build":       "Neural Nexus AGI",
+                "nexus":       True,
+                "nexus_flush": True,
+            }
 
         # ── Knowledge bin ──
 
