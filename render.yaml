@@ -4,7 +4,8 @@ services:
     env: python
     region: ohio
     plan: free
-    buildCommand: pip install -r requirements.txt
+    pythonVersion: "3.11.0"
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python -m cortana.main --web --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:

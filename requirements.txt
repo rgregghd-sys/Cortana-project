@@ -1,5 +1,4 @@
 # Cortana AI — Python dependencies for cloud deployment
-# Generated from working venv; pinned to exact versions for reproducibility.
 
 # Web framework
 fastapi==0.135.1
@@ -17,7 +16,8 @@ google-generativeai==0.8.6
 groq==1.0.0
 openai==2.24.0
 
-# Memory — SQLite FTS5 (built-in, no extra deps needed)
+# Vector memory
+chromadb==1.5.2
 
 # Web search + scraping
 duckduckgo_search==8.1.1
@@ -27,13 +27,13 @@ requests==2.32.5
 
 # Utilities
 pillow==12.1.1
-rich==14.3.3
+rich==14.0.0
 python-dotenv==1.2.1
 
 # Optional — Ethereum wallet for compute marketplace
 # eth-account  # uncomment if using Layer 14 compute marketplace
 
-# Neural augmentation (RNN + GNN for Layer 17 cognitive architecture)
-# CPU-only wheel — install with:
+# Neural augmentation (torch) is OPTIONAL — code degrades gracefully without it.
+# Install locally with:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-torch==2.10.0+cpu
+# Do NOT add torch here — the +cpu variant is not on PyPI and breaks cloud builds.
