@@ -247,8 +247,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .cs-stat{background:rgba(120,80,255,0.07);border:1px solid rgba(120,80,255,0.14);border-radius:6px;padding:4px 6px;text-align:center}
 .cs-stat-val{color:#d0b0ff;font-size:12px;font-weight:600;line-height:1.2}
 .cs-stat-lbl{color:var(--dim);font-size:7.5px;letter-spacing:.5px;margin-top:1px;text-transform:uppercase}
-.cs-mood-bar{height:3px;background:rgba(120,80,255,0.12);border-radius:2px;margin-bottom:8px;overflow:hidden}
-.cs-mood-fill{height:100%;background:linear-gradient(90deg,#4040cc,#a080ff,#ff90d0);border-radius:2px;transition:width 1.2s ease}
 .cs-thoughts{font-size:9px;color:var(--dim);line-height:1.55;max-height:140px;overflow-y:auto;border-top:1px solid rgba(120,80,255,0.10);padding-top:6px}
 .cs-thought-item{padding:2px 0 3px;border-bottom:1px solid rgba(120,80,255,0.07);word-break:break-word}
 .cs-thought-item:last-child{border-bottom:none}
@@ -662,7 +660,6 @@ header{
     <div class="cs-stat"><div class="cs-stat-val" id="csInteractions">—</div><div class="cs-stat-lbl">Talks</div></div>
     <div class="cs-stat"><div class="cs-stat-val" id="csThoughts">—</div><div class="cs-stat-lbl">Thoughts</div></div>
   </div>
-  <div class="cs-mood-bar"><div class="cs-mood-fill" id="csMoodBar" style="width:70%"></div></div>
   <div class="cs-thoughts" id="csThoughtsList"><span style="color:rgba(120,80,255,0.4)">Initialising stream...</span></div>
 </div>
 
@@ -1747,11 +1744,7 @@ function connect(){
           item.textContent = msg.thought || '';
           list.prepend(item);
           while (list.children.length > 8) list.removeChild(list.lastChild);
-          // Update mood if provided
-          if (msg.mood !== undefined) {
-            const fill = document.getElementById('csMoodBar');
-            if (fill) fill.style.width = Math.round(msg.mood * 100) + '%';
-          }
+          // mood is expressed through Cortana's response tone, not a bar
         })();
         break;
       case 'vision_response':
@@ -2037,7 +2030,6 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
     const moodLbl   = document.getElementById('csMoodLabel');
     const interEl   = document.getElementById('csInteractions');
     const thoughtEl = document.getElementById('csThoughts');
-    const moodBar   = document.getElementById('csMoodBar');
     const list      = document.getElementById('csThoughtsList');
 
     if(uptimeEl)  uptimeEl.textContent  = data.uptime_hours < 1
@@ -2046,7 +2038,6 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
     if(moodLbl)   moodLbl.textContent   = data.emotional_state || '—';
     if(interEl)   interEl.textContent   = data.total_interactions ?? '—';
     if(thoughtEl) thoughtEl.textContent = data.total_thoughts ?? '—';
-    if(moodBar)   moodBar.style.width   = Math.round((data.mood_score||0.7)*100) + '%';
 
     if(list && data.recent_thoughts && data.recent_thoughts.length){
       list.innerHTML = '';

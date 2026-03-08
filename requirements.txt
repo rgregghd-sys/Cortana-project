@@ -33,6 +33,7 @@ python-dotenv==1.2.1
 # Optional — Ethereum wallet for compute marketplace
 # eth-account  # uncomment if using Layer 14 compute marketplace
 
-# Optional — Neural augmentation (RNN + GNN for Layer 17 cognitive architecture)
-# CPU-only; install with: pip install torch --index-url https://download.pytorch.org/whl/cpu
-# torch>=2.0.0  # uncomment to enable RNN+GNN neural memory augmentation
+# Neural augmentation (RNN + GNN for Layer 17 cognitive architecture)
+# CPU-only wheel — install with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch==2.10.0+cpu

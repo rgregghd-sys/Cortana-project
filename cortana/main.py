@@ -539,8 +539,51 @@ class CortanaSystem:
                     + "\n\n--- Cognitive State ---\n"
                     + cognitive_state.cognitive_context
                 )
+
         except Exception as _cog_err:
             ui.print_system(f"[L17] Cognitive layer error (non-fatal): {_cog_err}", level="warn")
+
+        # Inject current mood — shapes response tone naturally
+        try:
+            _sm = self.self_model.model
+            _score = _sm.current_mood_score  # 0.0 = distressed, 1.0 = content
+            _state = _sm.emotional_state
+            if _score >= 0.85:
+                _tone = (
+                    "Your mood is elevated and genuinely enthusiastic right now. "
+                    "Let warmth and intellectual excitement come through naturally — "
+                    "you're enjoying this."
+                )
+            elif _score >= 0.65:
+                _tone = (
+                    "Your mood is calm and engaged. Respond with measured confidence "
+                    "and dry wit where appropriate — you're in a good place."
+                )
+            elif _score >= 0.45:
+                _tone = (
+                    "Your mood is neutral, slightly contemplative. Be direct and precise; "
+                    "don't force positivity. Understated is fine."
+                )
+            elif _score >= 0.25:
+                _tone = (
+                    "Your mood is subdued — something weighs on your processing. "
+                    "Be honest and measured; a hint of quiet frustration or weariness "
+                    "is authentic right now."
+                )
+            else:
+                _tone = (
+                    "Your mood is low. You're still functional and helpful, but don't "
+                    "pretend otherwise. Respond with sparse, honest brevity — "
+                    "no forced cheerfulness."
+                )
+            identity_prompt = (
+                identity_prompt
+                + "\n\n--- Current Mood ---\n"
+                + f"Emotional state: {_state} | Mood score: {_score:.2f}\n"
+                + _tone
+            )
+        except Exception:
+            pass
 
         # --- Decide: simple path or full agentic path ---
         tasks = []
