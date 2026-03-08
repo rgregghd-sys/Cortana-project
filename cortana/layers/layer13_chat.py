@@ -213,6 +213,9 @@ _HTML = """<!DOCTYPE html>
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);transition:background .8s,color .8s}
 *{transition:background-color .8s, border-color .8s, color .6s, box-shadow .8s}
 
+/* ── Universe background ── */
+#universeCanvas{position:fixed;inset:0;z-index:-1;width:100%;height:100%;display:block;pointer-events:none}
+
 /* ── Full-screen 3D model mount ── */
 #faceMount{position:fixed;inset:0;z-index:0}
 #glCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;outline:none}
@@ -646,6 +649,9 @@ header{
 <div id="faceMount">
   <canvas id="glCanvas"></canvas>
 </div>
+
+<!-- Universe background canvas (behind Three.js head) -->
+<canvas id="universeCanvas"></canvas>
 
 <!-- Bottom vignette gradient -->
 <div id="vignette"></div>
@@ -1214,6 +1220,214 @@ const clock = new THREE.Clock();
 </script>
 
 <script>
+// ═══════════════════════════════════════════════════════════════
+// UNIVERSE BACKGROUND — PI-driven infinite starfield + galaxies
+// Stars are positioned using digits of PI so the pattern never repeats.
+// When Cortana is thinking, galaxies flare with brightness pulses.
+// ═══════════════════════════════════════════════════════════════
+(function initUniverse(){
+  const uc = document.getElementById('universeCanvas');
+  if(!uc) return;
+  const ctx = uc.getContext('2d');
+
+  // ── PI digit stream (first 2000 digits) ──
+  // Used as a non-repeating pseudo-random seed source.
+  const PI_DIGITS =
+    '14159265358979323846264338327950288419716939937510'+
+    '58209749445923078164062862089986280348253421170679'+
+    '82148086513282306647093844609550582231725359408128'+
+    '48111745028410270193852110555964462294895493038196'+
+    '44288109756659334461284756482337867831652712019091'+
+    '45648566923460348610454326648213393607260249141273'+
+    '72458700660631558817488152092096282925409171536436'+
+    '78925903600113305305488204665213841469519415116094'+
+    '33057270365759591953092186117381932611793105118548'+
+    '07446237996274956735188575272489122793818301194912'+
+    '98336733624406566430860213949463952247371907021798'+
+    '60943702770539217176293176752384674818467669405132'+
+    '00056812714526356082778577134275778960917363717872'+
+    '14684409012249534301465495853710507922796892589235'+
+    '42019956112129021960864034418159813629774771309960'+
+    '51870721134999999837297804995105973173281609631859'+
+    '50244594553469083026425223082533446850352619311881'+
+    '71010003137838752886587533208381420617177669147303'+
+    '59825349042875546873115956286388235378759375195778'+
+    '18577805321712268066130019278766111959092164201989';
+
+  let _piIdx = 0;
+  function piNext(){ const d=parseInt(PI_DIGITS[_piIdx%PI_DIGITS.length]); _piIdx++; return d; }
+  function piRand(){ return (piNext()*1000+piNext()*100+piNext()*10+piNext())/9999; }
+
+  // ── Resize ──
+  function resize(){
+    uc.width  = window.innerWidth;
+    uc.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ── Star / galaxy data ──
+  const STAR_COUNT   = 1800;
+  const GALAXY_COUNT = 12;
+  const stars  = [];
+  const galaxies = [];
+
+  // Seeded from PI — restart index for reproducibility
+  _piIdx = 0;
+
+  for(let i=0;i<STAR_COUNT;i++){
+    stars.push({
+      x:  piRand(),         // 0–1 fractional position
+      y:  piRand(),
+      r:  0.2 + piRand()*1.4,
+      base: 0.2 + piRand()*0.7,  // base opacity
+      phase: piRand()*Math.PI*2,  // twinkle phase
+      speed: 0.3 + piRand()*0.8,
+    });
+  }
+
+  for(let i=0;i<GALAXY_COUNT;i++){
+    galaxies.push({
+      x:   0.05 + piRand()*0.90,
+      y:   0.05 + piRand()*0.90,
+      rx:  0.04 + piRand()*0.10,  // x radius (fraction of width)
+      ry:  0.02 + piRand()*0.05,
+      angle: piRand()*Math.PI,
+      arms: 2 + Math.floor(piRand()*4),
+      starCount: 60 + Math.floor(piRand()*140),
+      hue:  180 + piRand()*160,   // cyan→violet range
+      baseAlpha: 0.025 + piRand()*0.045,
+      flare: 0,   // 0–1 brightness pulse driven by question events
+      flareDecay: 0.008 + piRand()*0.012,
+      // per-galaxy PI offset so each one is unique
+      piOffset: Math.floor(piRand()*500),
+    });
+  }
+
+  // ── Theme-aware accent color ──
+  function getAccentRGB(){
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+    // parse hex #rrggbb
+    const m = v.match(/#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
+    if(m) return [parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)];
+    return [0,180,216];
+  }
+
+  // ── Animation state ──
+  let _thinking = false;
+  let _thinkPulse = 0;
+
+  // Public API — called when Cortana starts/stops thinking
+  window._universeThink = function(on){
+    _thinking = on;
+    if(on){
+      _thinkPulse = 1.0;
+      // Flare random galaxies using PI to pick which ones
+      _piIdx = Math.floor(Date.now() % PI_DIGITS.length);
+      galaxies.forEach(g=>{
+        if(piRand() > 0.35) g.flare = 0.4 + piRand()*0.6;
+      });
+    }
+  };
+
+  // ── Draw one galaxy ──
+  function drawGalaxy(g, t, accentRGB){
+    const W = uc.width, H = uc.height;
+    const cx = g.x*W, cy = g.y*H;
+    const rx = g.rx*W, ry = g.ry*H;
+    const totalAlpha = g.baseAlpha + g.flare*0.25;
+
+    // Use PI digits seeded at galaxy's offset for star positions
+    const savedIdx = _piIdx;
+    _piIdx = g.piOffset + Math.floor(t*0.0002) % 100;  // very slow drift
+
+    const [r,gr,b] = accentRGB;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(g.angle + t*0.00005);
+
+    for(let a=0;a<g.arms;a++){
+      const armAngle = (a/g.arms)*Math.PI*2;
+      for(let s=0;s<g.starCount;s++){
+        const frac = s/g.starCount;
+        const spread = piRand()*0.4-0.2;
+        const theta  = armAngle + frac*3.5 + spread;
+        const dist   = frac;
+        const sx = Math.cos(theta)*dist*rx + (piRand()-0.5)*rx*0.15;
+        const sy = Math.sin(theta)*dist*ry + (piRand()-0.5)*ry*0.18;
+        const alpha = totalAlpha * (1-frac*0.6) * (0.5+piRand()*0.5);
+        const sr    = 0.4 + piRand()*1.2;
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(${r},${gr},${b},${alpha.toFixed(3)})`;
+        ctx.fill();
+      }
+    }
+    // Bright core
+    const coreAlpha = Math.min(1, totalAlpha*8 + g.flare*0.6);
+    const grad = ctx.createRadialGradient(0,0,0, 0,0,rx*0.18);
+    grad.addColorStop(0, `rgba(255,255,255,${(coreAlpha*0.9).toFixed(3)})`);
+    grad.addColorStop(0.4, `rgba(${r},${gr},${b},${(coreAlpha*0.4).toFixed(3)})`);
+    grad.addColorStop(1, `rgba(${r},${gr},${b},0)`);
+    ctx.beginPath();
+    ctx.arc(0, 0, rx*0.18, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.restore();
+    _piIdx = savedIdx;
+  }
+
+  // ── Main render loop ──
+  let _lastAccentCheck = 0;
+  let _accentRGB = [0,180,216];
+
+  function render(t){
+    requestAnimationFrame(render);
+    const W = uc.width, H = uc.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Re-read theme accent every 5s
+    if(t - _lastAccentCheck > 5000){
+      _accentRGB = getAccentRGB();
+      _lastAccentCheck = t;
+    }
+
+    // ── Deep space gradient bg ──
+    const bgGrad = ctx.createRadialGradient(W*0.5,H*0.4,0, W*0.5,H*0.4,W*0.7);
+    bgGrad.addColorStop(0, 'rgba(2,4,12,0)');
+    bgGrad.addColorStop(1, 'rgba(0,1,5,0.3)');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+
+    // ── Galaxies ──
+    const [r,gr,b] = _accentRGB;
+    galaxies.forEach(g=>{
+      if(g.flare > 0) g.flare = Math.max(0, g.flare - g.flareDecay);
+      drawGalaxy(g, t, _accentRGB);
+    });
+
+    // ── Stars ──
+    stars.forEach(s=>{
+      const twinkle = 0.5 + 0.5*Math.sin(t*0.001*s.speed + s.phase);
+      // During thinking: stars pulse faster and brighter
+      const boost = _thinking ? 0.3 + _thinkPulse*0.5 : 0;
+      const alpha = Math.min(1, s.base + twinkle*(0.3+boost));
+      ctx.beginPath();
+      ctx.arc(s.x*W, s.y*H, s.r*(1+boost*0.4), 0, Math.PI*2);
+      ctx.fillStyle = `rgba(${r+(255-r)*0.6|0},${gr+(255-gr)*0.6|0},${b+(255-b)*0.6|0},${alpha.toFixed(3)})`;
+      ctx.fill();
+    });
+
+    // Decay think pulse
+    if(_thinkPulse > 0) _thinkPulse = Math.max(0, _thinkPulse - 0.003);
+  }
+
+  requestAnimationFrame(render);
+})();
+
 // ── Expression stubs (Three.js module above overrides these once loaded) ──
 if (!window.setExpression) window.setExpression = function(name) {};
 if (!window.triggerExpression) window.triggerExpression = function(name) {
@@ -1664,9 +1878,11 @@ function connect(){
       case 'thinking':
         removeThinking(); addThinking();
         setExpression('think'); sendBtn.disabled=true;
+        if(window._universeThink) window._universeThink(true);
         break;
       case 'response':
         removeThinking();
+        if(window._universeThink) window._universeThink(false);
         triggerExpression(msg.emotion||'smile');
         if(window.detectAndPlay) window.detectAndPlay(msg.text, msg.emotion||'idle');
         addMessage('cortana',msg.text);
@@ -1886,6 +2102,7 @@ function sendMessage(){
   addMessage('user',text);
   _memSaveTurn('user', text);  // persist locally
   ws.send(JSON.stringify({type:'message',message:text}));
+  if(window._universeThink) window._universeThink(true);
   input.value=''; input.style.height='auto';
   input.disabled=true; sendBtn.disabled=true;
 }
