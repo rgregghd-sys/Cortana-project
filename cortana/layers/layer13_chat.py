@@ -814,7 +814,7 @@ header{
     <button id="screenToggleBtn" title="Share screen with Cortana">&#x1F5A5;</button>
     <button id="send" disabled>Send</button>
   </div>
-  <div id="versionTag">v2.1.0 &mdash; Neural Nexus AGI</div>
+  <div id="versionTag">v2.2.0 &mdash; Neural Nexus AGI</div>
 </div>
 
 <!-- Webcam panel -->
@@ -1859,10 +1859,14 @@ async function devaiRespond(id, decision, cardEl) {
   } catch(e) { showToast('DevAI respond error: ' + e.message); }
 }
 
+let _reconnectDelay = 3000;
+let _reconnectAttempts = 0;
 function connect(){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen=()=>{
+    _reconnectDelay = 3000;
+    _reconnectAttempts = 0;
     ws.send(JSON.stringify({type:'init',session_id:SESSION_ID,token:authToken}));
     connDot.className='dot online'; connLabel.textContent='Online';
     input.disabled=false; sendBtn.disabled=false;
@@ -1873,8 +1877,12 @@ function connect(){
     connDot.className='dot offline'; connLabel.textContent='Offline';
     input.disabled=true; sendBtn.disabled=true;
     triggerExpression('sad');
-    addNote('Connection lost \u2014 reconnecting\u2026');
-    setTimeout(connect,3000);
+    _reconnectAttempts++;
+    // Exponential backoff capped at 30s — handles Render cold-start delays
+    _reconnectDelay = Math.min(30000, _reconnectDelay * 1.5);
+    const secs = Math.round(_reconnectDelay/1000);
+    addNote(`Connection lost \u2014 retrying in ${secs}s (attempt ${_reconnectAttempts})\u2026`);
+    setTimeout(connect, _reconnectDelay);
   };
   ws.onerror=()=>ws.close();
   ws.onmessage=(e)=>{
@@ -2866,7 +2874,7 @@ class ChatLayer:
         async def get_version():
             """Return current build version (public)."""
             return {
-                "version":     "2.1.0",
+                "version":     "2.2.0",
                 "build":       "Neural Nexus AGI",
                 "nexus":       True,
                 "nexus_flush": True,
