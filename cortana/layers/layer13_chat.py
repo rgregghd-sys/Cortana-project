@@ -907,14 +907,12 @@ function loadGLB(url) {
       mixer.clipAction(gltf.animations[0]).play();
     }
   }, undefined, (err) => {
-    // Fallback to rigged model on error
-    if (url !== '/static/cortana_rigged.glb') loadGLB('/static/cortana_rigged.glb');
-    else console.error('[GLB]', err);
+    console.error('[GLB] Failed to load:', url, err);
   });
 }
 
-// Try self-designed model first; fall back to rigged original
-loadGLB('/static/cortana_self.glb');
+// Load the Meshy AI biped model
+loadGLB('/static/cortana.glb');
 
 // ═══════════════════════════════════════════════════════════
 //  PROCEDURAL ANIMATION SYSTEM
@@ -1613,7 +1611,7 @@ function connect(){
         if(window._visionHandler) window._visionHandler(msg);
         break;
       case 'model_update':
-        loadGLB(msg.glb_path||'/static/cortana_self.glb');
+        loadGLB(msg.glb_path||'/static/cortana.glb');
         triggerExpression('smile');
         addNote('\u2728 Cortana updated her 3D appearance.');
         if(msg.message) showToast(msg.message);
