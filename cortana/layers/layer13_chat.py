@@ -2201,6 +2201,18 @@ class ChatLayer:
             except Exception as exc:
                 return JSONResponse(status_code=503, content={"error": str(exc)})
 
+        @app.post("/api/agi/validate")
+        async def api_agi_validate(request: Request):
+            """Validate a candidate system prompt against the golden test suite."""
+            try:
+                body = await request.json()
+                prompt = body.get("prompt", "")
+                if not prompt:
+                    return JSONResponse(status_code=400, content={"error": "prompt required"})
+                return self.system.agi.validate_prompt(prompt)
+            except Exception as exc:
+                return JSONResponse(status_code=503, content={"error": str(exc)})
+
         @app.get("/api/tasks")
         async def api_tasks(request: Request):
             token = request.headers.get("X-Session-Token", "")

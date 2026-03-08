@@ -410,6 +410,7 @@ class CortanaSystem:
         state: CortanaState,
         conversation: List[ConversationTurn],
         on_chunk: Optional[Callable[[str], None]] = None,
+        session_id: str = "",
     ) -> tuple[str, CortanaState, List[ConversationTurn], str]:
         """
         Full 13-layer pipeline for one user turn.
@@ -580,12 +581,19 @@ class CortanaSystem:
         except Exception as _cog_err:
             ui.print_system(f"[L17] Cognitive layer error (non-fatal): {_cog_err}", level="warn")
 
-        # --- Layer 18: AGI augmentation (cognitive mode, cross-domain, world model, goals, ethics) ---
+        # --- Layer 18: AGI augmentation ---
         try:
+            # Update Theory of Mind user model
+            _history = [t.content for t in conversation[-6:] if t.role == "user"]
+            self.agi.update_user_model(session_id, perceived.content, _history)
+
             identity_prompt = self.agi.augment_prompt(
                 query=perceived.content,
                 intent=perceived.intent,
                 identity_prompt=identity_prompt,
+                session_id=session_id,
+                memory_hit_count=len(memories) if memories else 0,
+                complexity=perceived.complexity,
             )
         except Exception as _agi_err:
             ui.print_system(f"[L18] AGI augment error (non-fatal): {_agi_err}", level="warn")
