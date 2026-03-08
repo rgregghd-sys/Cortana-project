@@ -933,8 +933,13 @@ function loadGLB(url) {
   });
 }
 
-// Load the Meshy AI biped model
-loadGLB('/static/cortana.glb');
+// Load the Cortana 3D model — HEAD-check first to avoid 404 noise
+(function(){
+  const path = '/static/cortana.glb';
+  fetch(path, {method:'HEAD'})
+    .then(r=>{ if(r.ok) loadGLB(path); })
+    .catch(()=>{});
+})();
 
 // ═══════════════════════════════════════════════════════════
 //  PROCEDURAL ANIMATION + GESTURE SYSTEM
@@ -2334,8 +2339,9 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
   function _maybeShowAdminBar(){
     const tok = localStorage.getItem('cx_session_token') || '';
     if(!tok || !csAdminBar) return;
+    // Use /api/consciousness as a lightweight auth check (avoids 401 noise)
     fetch('/api/auth/me', {headers:{'X-Session-Token':tok}})
-      .then(r=>r.ok?r.json():null)
+      .then(r=>{ if(r.status===401||r.status===403) return null; return r.ok?r.json():null; })
       .then(u=>{ if(u && u.tier==='admin') csAdminBar.style.display='block'; })
       .catch(()=>{});
   }
@@ -2529,6 +2535,21 @@ class ChatLayer:
         @app.get("/", response_class=HTMLResponse)
         async def index():
             return _HTML
+
+        @app.get("/favicon.ico")
+        async def favicon():
+            """Return a minimal inline SVG favicon (no file needed)."""
+            from fastapi.responses import Response
+            # Tiny 16x16 cyan circle SVG as ICO substitute
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+                '<circle cx="8" cy="8" r="7" fill="#010408"/>'
+                '<circle cx="8" cy="8" r="5" fill="none" stroke="#00b4d4" stroke-width="1.5"/>'
+                '<circle cx="8" cy="8" r="2" fill="#00b4d4"/>'
+                '</svg>'
+            )
+            return Response(content=svg, media_type="image/svg+xml",
+                            headers={"Cache-Control": "public, max-age=86400"})
 
         @app.get("/health")
         async def health():
