@@ -63,9 +63,10 @@ class UserInput(BaseModel):
 
 class PerceivedInput(BaseModel):
     content: str
-    intent: Literal["simple", "conversational", "research", "code", "analysis", "creative", "self_design"]
+    intent: Literal["simple", "conversational", "research", "code", "analysis", "creative", "self_design", "devai"]
     complexity: float = Field(ge=0.0, le=1.0)  # 0.0 = trivial, 1.0 = very complex
     keywords: List[str] = Field(default_factory=list)
+    emotional_tone: Literal["neutral", "frustrated", "curious", "excited", "confused", "playful"] = "neutral"
 
 
 # ---------------------------------------------------------------------------

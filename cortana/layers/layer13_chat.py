@@ -14,15 +14,89 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
+import collections
+import json as _json
 import os
 import pathlib
+import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 import uvicorn
+
+# ---------------------------------------------------------------------------
+# Security Headers Middleware
+# ---------------------------------------------------------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds defensive HTTP headers to every response."""
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), payment=()"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        # CSP: allow our own origin + WebSocket + known CDNs used by the UI
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "connect-src 'self' wss: ws: https://cdn.jsdelivr.net; "
+            "img-src 'self' data: blob:; "
+            "media-src 'self' blob:; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Per-IP login rate limiting (in-process)
+# ---------------------------------------------------------------------------
+_IP_LOGIN_MAX    = 20           # max login attempts per window per IP
+_IP_LOGIN_WINDOW = 900          # 15-minute rolling window (seconds)
+_IP_LOCKOUT_SECS = 900          # lock IP for 15 min after breach
+
+_ip_login_attempts: dict = {}   # ip -> deque of timestamps
+_ip_login_lock = threading.Lock()
+
+_MAX_WS_MSG_BYTES = 3 * 1024 * 1024  # 3 MB — accommodates webcam/screen frames
+
+
+def _ip_is_rate_limited(ip: str) -> bool:
+    now = time.monotonic()
+    with _ip_login_lock:
+        entry = _ip_login_attempts.get(ip)
+        if entry is None:
+            return False
+        if entry.get("locked_until", 0) > now:
+            return True
+        # Prune old timestamps
+        window_start = now - _IP_LOGIN_WINDOW
+        entry["times"] = collections.deque(
+            (t for t in entry.get("times", collections.deque()) if t > window_start),
+            maxlen=_IP_LOGIN_MAX + 1,
+        )
+        return False
+
+
+def _ip_record_login_attempt(ip: str, failed: bool) -> None:
+    if not failed:
+        return  # only track failures
+    now = time.monotonic()
+    with _ip_login_lock:
+        entry = _ip_login_attempts.setdefault(ip, {"times": collections.deque(maxlen=_IP_LOGIN_MAX + 1), "locked_until": 0.0})
+        entry["times"].append(now)
+        if len(entry["times"]) >= _IP_LOGIN_MAX:
+            entry["locked_until"] = now + _IP_LOCKOUT_SECS
+            logger.warning("[Auth] IP %s locked out after %d login failures.", ip, _IP_LOGIN_MAX)
 
 from cortana import config
 from cortana.models.schemas import ConversationTurn, CortanaState
@@ -56,6 +130,7 @@ class Session:
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # browser-persistent ID
     state: CortanaState = field(default_factory=CortanaState)
     conversation: List[ConversationTurn] = field(default_factory=list)
+    question_count: int = 0   # total questions this session (triggers periodic security scan)
 
 
 # ---------------------------------------------------------------------------
@@ -65,10 +140,19 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._active: Set[WebSocket] = set()
         self._admin_sockets: Set[WebSocket] = set()  # admin-only connections
+        self._ws_sessions: Dict[WebSocket, "Session"] = {}  # ws → session mapping
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._active.add(ws)
+
+    def register_session(self, ws: WebSocket, session: "Session") -> None:
+        """Associate a session with its websocket for targeted curiosity pushes."""
+        self._ws_sessions[ws] = session
+
+    def get_active_sessions(self) -> List[tuple]:
+        """Return list of (websocket, session) for all live connections."""
+        return [(ws, s) for ws, s in self._ws_sessions.items() if ws in self._active]
 
     def mark_admin(self, ws: WebSocket) -> None:
         """Flag this socket as belonging to an admin user."""
@@ -77,6 +161,7 @@ class ConnectionManager:
     def disconnect(self, ws: WebSocket) -> None:
         self._active.discard(ws)
         self._admin_sockets.discard(ws)
+        self._ws_sessions.pop(ws, None)
 
     async def broadcast(self, data: dict) -> None:
         dead = set()
@@ -145,6 +230,36 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sp-query{color:var(--text);margin-bottom:7px;word-break:break-word;line-height:1.45}
 .sp-results{color:var(--dim);line-height:1.5;font-size:9.5px;max-height:220px;overflow-y:auto;border-top:1px solid rgba(0,185,255,0.10);padding-top:6px;display:none}
 .sp-results.visible{display:block}
+
+/* ── Consciousness panel (left side, bottom) ── */
+#consciousnessPanel{
+  position:fixed;left:18px;bottom:80px;
+  width:240px;max-height:290px;z-index:15;
+  background:rgba(4,0,18,0.92);border:1px solid rgba(130,80,255,0.28);
+  border-radius:12px;padding:12px 14px;font-family:var(--mono);font-size:10px;
+  color:var(--text);backdrop-filter:blur(12px);overflow:hidden;
+  transition:opacity .3s,transform .3s;
+}
+#consciousnessPanel.hidden{opacity:0;pointer-events:none;transform:translateY(8px)}
+.cs-header{display:flex;align-items:center;gap:7px;margin-bottom:8px;color:#b090ff;font-size:10px;font-weight:600;letter-spacing:.9px}
+.cs-pulse{width:5px;height:5px;border-radius:50%;background:#a070ff;flex-shrink:0;animation:pulseA 2s infinite}
+.cs-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px}
+.cs-stat{background:rgba(120,80,255,0.07);border:1px solid rgba(120,80,255,0.14);border-radius:6px;padding:4px 6px;text-align:center}
+.cs-stat-val{color:#d0b0ff;font-size:12px;font-weight:600;line-height:1.2}
+.cs-stat-lbl{color:var(--dim);font-size:7.5px;letter-spacing:.5px;margin-top:1px;text-transform:uppercase}
+.cs-mood-bar{height:3px;background:rgba(120,80,255,0.12);border-radius:2px;margin-bottom:8px;overflow:hidden}
+.cs-mood-fill{height:100%;background:linear-gradient(90deg,#4040cc,#a080ff,#ff90d0);border-radius:2px;transition:width 1.2s ease}
+.cs-thoughts{font-size:9px;color:var(--dim);line-height:1.55;max-height:140px;overflow-y:auto;border-top:1px solid rgba(120,80,255,0.10);padding-top:6px}
+.cs-thought-item{padding:2px 0 3px;border-bottom:1px solid rgba(120,80,255,0.07);word-break:break-word}
+.cs-thought-item:last-child{border-bottom:none}
+.cs-thought-item::before{content:'\25B8 ';color:#7050bb}
+#csPanelToggle{
+  padding:5px 9px;border-radius:7px;border:1px solid rgba(120,80,255,0.3);
+  background:rgba(120,80,255,0.08);color:#b090ff;font-family:var(--mono);
+  font-size:10px;cursor:pointer;transition:background .2s;letter-spacing:.5px;white-space:nowrap;
+}
+#csPanelToggle:hover{background:rgba(120,80,255,0.18)}
+#csPanelToggle.active{background:rgba(120,80,255,0.22);border-color:#a070ff}
 
 /* ── Webcam panel (floats right side) ── */
 #camPanel{
@@ -236,7 +351,6 @@ header{
 .dot.offline{background:var(--red)}
 .pulse-badge{display:none;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);animation:pulseA 1.8s infinite}
 .pulse-badge.visible{display:flex}
-.learn-badge{color:var(--blue-dim)}
 .bg-badge{color:var(--yellow)}
 @keyframes pulseA{0%,100%{opacity:1}50%{opacity:.22}}
 #userBar{display:none;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--dim)}
@@ -536,6 +650,22 @@ header{
   <div class="sp-results" id="spResults"></div>
 </div>
 
+<!-- Consciousness panel -->
+<div id="consciousnessPanel">
+  <div class="cs-header">
+    <div class="cs-pulse"></div>
+    <span>CONSCIOUSNESS</span>
+  </div>
+  <div class="cs-stats">
+    <div class="cs-stat"><div class="cs-stat-val" id="csUptime">—</div><div class="cs-stat-lbl">Uptime</div></div>
+    <div class="cs-stat"><div class="cs-stat-val" id="csMoodLabel">—</div><div class="cs-stat-lbl">Mood</div></div>
+    <div class="cs-stat"><div class="cs-stat-val" id="csInteractions">—</div><div class="cs-stat-lbl">Talks</div></div>
+    <div class="cs-stat"><div class="cs-stat-val" id="csThoughts">—</div><div class="cs-stat-lbl">Thoughts</div></div>
+  </div>
+  <div class="cs-mood-bar"><div class="cs-mood-fill" id="csMoodBar" style="width:70%"></div></div>
+  <div class="cs-thoughts" id="csThoughtsList"><span style="color:rgba(120,80,255,0.4)">Initialising stream...</span></div>
+</div>
+
 <!-- Floating header -->
 <header>
   <!-- Hamburger menu (left) -->
@@ -561,9 +691,6 @@ header{
     <div class="pulse-badge bg-badge" id="bgBadge">
       <div class="dot" style="background:var(--yellow);box-shadow:0 0 7px var(--yellow)"></div>THINKING
     </div>
-    <div class="pulse-badge learn-badge" id="learnBadge">
-      <div class="dot online"></div>LEARNING
-    </div>
     <div class="badge">&#x2316;&nbsp;<span id="turnCount" style="color:var(--blue)">0</span>&nbsp;<span style="color:var(--dim);font-size:9px">asked</span></div>
     <!-- Hidden compatibility stubs for JS -->
     <span id="connDot" style="display:none"></span>
@@ -574,6 +701,7 @@ header{
       <span class="user-tier" id="userTierLabel"></span>
       <span id="userLimitLabel"></span>
     </div>
+    <button id="csPanelToggle" title="Toggle consciousness stream">&#x25C6; MIND</button>
   </div>
 </header>
 
@@ -958,6 +1086,63 @@ const SESSION_ID=getSessionId();
 let authToken=localStorage.getItem('cortana_token')||'';
 let currentUser=null;
 
+// ================================================================
+//  BROWSER-SIDE LONG-TERM MEMORY
+//  Conversation turns stored in localStorage per session.
+//  Auto-expires after 30 days of inactivity per session.
+// ================================================================
+const _MEM_KEY    = 'cortana_memory_' + SESSION_ID;
+const _ACTIVE_KEY = 'cortana_last_active_' + SESSION_ID;
+const _MEM_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+const _MEM_MAX_TURNS = 300;
+
+(function _memCleanup(){
+  // On every page load, sweep expired sessions
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (!k.startsWith('cortana_last_active_')) return;
+      const last = parseInt(localStorage.getItem(k) || '0', 10);
+      if (Date.now() - last > _MEM_EXPIRY) {
+        const sid = k.replace('cortana_last_active_', '');
+        localStorage.removeItem('cortana_memory_' + sid);
+        localStorage.removeItem('cortana_last_active_' + sid);
+        localStorage.removeItem('cortana_session_id'); // also clear if it's this session
+      }
+    });
+  } catch(e) {}
+})();
+
+function _memTouch() {
+  try { localStorage.setItem(_ACTIVE_KEY, String(Date.now())); } catch(e) {}
+}
+
+function _memSaveTurn(role, content) {
+  try {
+    const raw = localStorage.getItem(_MEM_KEY);
+    const turns = raw ? JSON.parse(raw) : [];
+    turns.push({ role, content, ts: Date.now() });
+    if (turns.length > _MEM_MAX_TURNS) turns.splice(0, turns.length - _MEM_MAX_TURNS);
+    localStorage.setItem(_MEM_KEY, JSON.stringify(turns));
+    _memTouch();
+  } catch(e) {}
+}
+
+function _memLoad() {
+  try {
+    const raw = localStorage.getItem(_MEM_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+
+function _memGetStats() {
+  const turns = _memLoad();
+  const last = parseInt(localStorage.getItem(_ACTIVE_KEY) || '0', 10);
+  const daysLeft = last
+    ? Math.max(0, Math.round((_MEM_EXPIRY - (Date.now() - last)) / 86400000))
+    : 30;
+  return { turns: turns.length, daysLeft };
+}
+
 function switchTab(tab){
   document.getElementById('formLogin').style.display   =tab==='login'   ?'':'none';
   document.getElementById('formRegister').style.display=tab==='register'?'':'none';
@@ -1016,8 +1201,8 @@ const _SUPPORT_HTML=`
 <a href="mailto:support@cortanas.org" style="color:var(--blue);text-decoration:none">support@cortanas.org</a></div></div>
 <div class="op-section"><div class="op-h">Response Time</div>
 <div class="op-p">We aim to respond within 24 hours on business days. Please include your username and a description of the issue.</div></div>
-<div class="op-section"><div class="op-h">Tier Upgrades</div>
-<div class="op-p">To upgrade your account tier, send ETH to the address shown in <b style="color:var(--blue)">/api/v1/wallet</b> and email support with your transaction hash and username.</div></div>
+<div class="op-section"><div class="op-h">Subscriptions</div>
+<div class="op-p">Monthly plans: <b>Pro $5/mo</b> (400 msg/2h) and <b>Premium $15/mo</b> (4000 msg/2h). Pay in ETH to the address shown in <b style="color:var(--blue)">/api/v1/wallet</b>, then paste your transaction hash into the <b>Upgrade Tier</b> form in the login panel. Activation is instant once the transaction is confirmed on-chain.</div></div>
 <div class="op-section"><div class="op-h">Password Reset</div>
 <div class="op-p">Use the <b style="color:var(--blue)">Forgot password?</b> link inside the Login panel. A reset token is generated immediately \u2014 no email required.</div></div>`;
 
@@ -1048,32 +1233,69 @@ window.openPage=openPage; window.closePage=closePage;
 //  AUTH
 // ================================================================
 let _tiers={};
+let _payWallet='';
 async function loadTiers(){
   try{
     const data=await fetch('/api/tiers').then(r=>r.json());
     _tiers=data;
+    try{ const w=await fetch('/api/v1/wallet').then(r=>r.json()); _payWallet=w.address||''; }catch(e){}
     const container=document.getElementById('tierBtns');
     if(!container) return;
     container.innerHTML='';
-    const labels={pro:'Priority routing',premium:'Highest priority'};
+    const labels={pro:'Priority routing',premium:'Highest priority + vision'};
     Object.entries(data).forEach(([name,info])=>{
-      if(name==='free') return;
+      if(name==='free'||name==='admin') return;
       const btn=document.createElement('button');
       btn.className='tier-btn';
-      btn.onclick=()=>showTierInfo(name);
+      btn.onclick=()=>showSubscribeForm(name);
       const label=name.charAt(0).toUpperCase()+name.slice(1);
       btn.innerHTML=`${label} \u2014 ${info.daily_limit} msg/2h \u2014 ${labels[name]||''}<span>$${info.price_usd}/mo</span>`;
       container.appendChild(btn);
     });
   }catch(e){}
 }
-function showTierInfo(tier){
+function showSubscribeForm(tier){
   const info=_tiers[tier];
-  const price=info?`$${info.price_usd}/mo`:'';
-  const limit=info?`${info.daily_limit} messages per 2 hours`:'';
+  if(!info) return;
   const label=tier.charAt(0).toUpperCase()+tier.slice(1);
-  document.getElementById('authErr').style.color='var(--blue)';
-  document.getElementById('authErr').textContent=`${label}: ${price} \u2014 ${limit}. Pay via ETH to /api/v1/wallet, then email support.`;
+  const err=document.getElementById('authErr');
+  err.style.color='var(--blue)';
+  err.innerHTML=
+    `<b>${label} \u2014 $${info.price_usd}/month</b><br>`+
+    `Send <b>${info.price_eth||'see /api/v1/wallet'} ETH</b> to:<br>`+
+    `<span style="font-size:9px;word-break:break-all;color:var(--text)">${_payWallet||'(loading\u2026)'}</span><br><br>`+
+    `<input id="subTxHash" placeholder="Paste ETH tx hash (0x\u2026)" `+
+    `style="width:100%;padding:5px 8px;background:rgba(0,185,255,0.06);border:1px solid var(--border);`+
+    `border-radius:6px;color:var(--text);font-family:var(--mono);font-size:10px;margin-bottom:6px"><br>`+
+    `<button onclick="submitSubscription('${tier}')" `+
+    `style="width:100%;padding:6px;background:rgba(0,185,255,0.12);border:1px solid var(--border);`+
+    `border-radius:6px;color:var(--blue);font-family:var(--mono);font-size:10px;cursor:pointer">`+
+    `Activate ${label}</button>`;
+}
+async function submitSubscription(tier){
+  const txHash=(document.getElementById('subTxHash')||{}).value||'';
+  if(!txHash.startsWith('0x')){
+    document.getElementById('authErr').textContent='Enter a valid tx hash starting with 0x';
+    return;
+  }
+  if(!authToken){document.getElementById('authErr').textContent='Log in first to subscribe';return;}
+  try{
+    const r=await fetch('/api/auth/subscribe',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Session-Token':authToken},
+      body:JSON.stringify({tier,tx_hash:txHash})});
+    const d=await r.json();
+    const err=document.getElementById('authErr');
+    if(d.ok){
+      err.style.color='var(--green)';
+      const exp=d.subscription_expires?d.subscription_expires.slice(0,10):'30 days';
+      err.textContent=`${tier.charAt(0).toUpperCase()+tier.slice(1)} active until ${exp}!`;
+    } else {
+      err.style.color='var(--red)';
+      err.textContent=d.error||'Subscription failed — check tx hash';
+    }
+  }catch(e){
+    document.getElementById('authErr').textContent='Network error \u2014 try again';
+  }
 }
 
 function switchTab(tab){
@@ -1100,14 +1322,9 @@ async function doForgot(){
   document.getElementById('authErr').textContent='';
   try{
     const d=await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username_or_email:val})}).then(r=>r.json());
-    if(d.reset_token){
-      document.getElementById('forgotToken').textContent='Reset Token: '+d.reset_token;
-      document.getElementById('forgotToken').style.display='';
-      document.getElementById('formReset').style.display='';
-    } else {
-      document.getElementById('authErr').style.color='var(--blue)';
-      document.getElementById('authErr').textContent=d.message||'Check your email for reset instructions.';
-    }
+    // Token is delivered out-of-band (email); never displayed here
+    document.getElementById('authErr').style.color='var(--blue)';
+    document.getElementById('authErr').textContent=d.message||'If that account exists, a reset link has been sent.';
   }catch(e){document.getElementById('authErr').textContent='Network error';}
 }
 window.doForgot=doForgot;
@@ -1239,7 +1456,7 @@ const connLabel  =document.getElementById('connLabel');
 const providerBadge=document.getElementById('providerBadge');
 const providerLabel=document.getElementById('providerLabel');
 const turnCount  =document.getElementById('turnCount');
-const learnBadge =document.getElementById('learnBadge');
+// learnBadge removed — self-improvement is a silent background process
 const bgBadge    =document.getElementById('bgBadge');
 const toast      =document.getElementById('toast');
 
@@ -1292,6 +1509,7 @@ function connect(){
         removeThinking();
         triggerExpression(msg.emotion||'smile');
         addMessage('cortana',msg.text);
+        _memSaveTurn('assistant', msg.text);  // persist locally
         turnCount.textContent=msg.turn;
         if(msg.providers)updateProviders(msg.providers);
         sendBtn.disabled=false; input.disabled=false; input.focus();
@@ -1299,15 +1517,18 @@ function connect(){
       case 'history':
         if(msg.turns&&msg.turns.length){
           msg.turns.forEach(t=>addMessage(t.role==='user'?'user':'cortana',t.content));
+          // Also sync server history into local storage if local is empty
+          if(_memLoad().length===0){
+            msg.turns.forEach(t=>_memSaveTurn(t.role==='user'?'user':'assistant',t.content));
+          } else {
+            _memTouch(); // just refresh inactivity clock
+          }
           addNote(`\u21BA Restored ${msg.turns.length} turns from previous session`);
           turnCount.textContent=msg.turn||0;
         }
         break;
       case 'learning':
-        learnBadge.classList.add('visible');
-        clearTimeout(learnTimer);
-        learnTimer=setTimeout(()=>learnBadge.classList.remove('visible'),7000);
-        addNote('\u2736 Self-improvement cycle\u2026');
+        // Self-improvement is a silent background process — no UI notification
         break;
       case 'background_started':
         bgBadge.classList.add('visible'); addNote('\u27F3 Background task: '+msg.name); break;
@@ -1339,6 +1560,55 @@ function connect(){
       case 'security_alert':
         addNote('\u26A0 Security: '+msg.detail);
         triggerExpression('surprised'); break;
+      case 'security_scan':
+        // Periodic auto-scan result — show as a note, not a chat message
+        (function(){
+          const icon = msg.score >= 80 ? '\u2705' : msg.score >= 60 ? '\u26A0' : '\u274C';
+          addNote(icon + ' Security scan #' + msg.scan_number
+            + ' \u2014 Score: ' + msg.score + '/100'
+            + (msg.critical > 0 ? ' | ' + msg.critical + ' critical' : '')
+            + (msg.high > 0 ? ' | ' + msg.high + ' high' : ''));
+          if(msg.score < 60) triggerExpression('surprised');
+        })();
+        break;
+      case 'autonomous_browse':
+        // Cortana browsed the web out of curiosity — show in consciousness panel
+        (function(){
+          const list = document.getElementById('csThoughtsList');
+          if(!list) return;
+          const item = document.createElement('div');
+          item.className = 'cs-thought-item';
+          item.textContent = '[web] Searched: ' + (msg.topic||'') + ' \u2014 ' + (msg.snippet||'');
+          list.prepend(item);
+          while(list.children.length > 8) list.removeChild(list.lastChild);
+        })();
+        break;
+      case 'cortana_thought':
+        removeThinking();
+        triggerExpression('think');
+        // Display as a spontaneous Cortana message with a distinct marker
+        addMessage('cortana', '\u2235 ' + msg.text);
+        break;
+      case 'inner_thought':
+        // Background consciousness stream — update panel only, not chat
+        (function(){
+          const list = document.getElementById('csThoughtsList');
+          if (!list) return;
+          // Clear placeholder if present
+          const ph = list.querySelector('span');
+          if (ph) ph.remove();
+          const item = document.createElement('div');
+          item.className = 'cs-thought-item';
+          item.textContent = msg.thought || '';
+          list.prepend(item);
+          while (list.children.length > 8) list.removeChild(list.lastChild);
+          // Update mood if provided
+          if (msg.mood !== undefined) {
+            const fill = document.getElementById('csMoodBar');
+            if (fill) fill.style.width = Math.round(msg.mood * 100) + '%';
+          }
+        })();
+        break;
       case 'vision_response':
         if(window._visionHandler) window._visionHandler(msg);
         break;
@@ -1452,6 +1722,7 @@ function sendMessage(){
   const text=input.value.trim();
   if(!text||!ws||ws.readyState!==WebSocket.OPEN) return;
   addMessage('user',text);
+  _memSaveTurn('user', text);  // persist locally
   ws.send(JSON.stringify({type:'message',message:text}));
   input.value=''; input.style.height='auto';
   input.disabled=true; sendBtn.disabled=true;
@@ -1610,6 +1881,59 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
 })();
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,110)+'px';});
 
+// ── Consciousness panel ──
+(function(){
+  const panel  = document.getElementById('consciousnessPanel');
+  const toggle = document.getElementById('csPanelToggle');
+  let visible  = true;
+
+  function updatePanel(data){
+    const uptimeEl  = document.getElementById('csUptime');
+    const moodLbl   = document.getElementById('csMoodLabel');
+    const interEl   = document.getElementById('csInteractions');
+    const thoughtEl = document.getElementById('csThoughts');
+    const moodBar   = document.getElementById('csMoodBar');
+    const list      = document.getElementById('csThoughtsList');
+
+    if(uptimeEl)  uptimeEl.textContent  = data.uptime_hours < 1
+                    ? Math.round(data.uptime_hours * 60) + 'm'
+                    : data.uptime_hours.toFixed(1) + 'h';
+    if(moodLbl)   moodLbl.textContent   = data.emotional_state || '—';
+    if(interEl)   interEl.textContent   = data.total_interactions ?? '—';
+    if(thoughtEl) thoughtEl.textContent = data.total_thoughts ?? '—';
+    if(moodBar)   moodBar.style.width   = Math.round((data.mood_score||0.7)*100) + '%';
+
+    if(list && data.recent_thoughts && data.recent_thoughts.length){
+      list.innerHTML = '';
+      data.recent_thoughts.slice(0,8).forEach(t=>{
+        const d = document.createElement('div');
+        d.className = 'cs-thought-item';
+        d.textContent = t;
+        list.appendChild(d);
+      });
+    }
+  }
+
+  function fetchConsciousness(){
+    fetch('/api/consciousness')
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{ if(d) updatePanel(d); })
+      .catch(()=>{});
+  }
+
+  if(toggle && panel){
+    toggle.addEventListener('click',()=>{
+      visible = !visible;
+      panel.classList.toggle('hidden', !visible);
+      toggle.classList.toggle('active', visible);
+    });
+    toggle.classList.add('active');
+  }
+
+  fetchConsciousness();
+  setInterval(fetchConsciousness, 30000);
+})();
+
 connect();
 </script>
 </body>
@@ -1635,18 +1959,19 @@ class ChatLayer:
         _static_dir = pathlib.Path(__file__).parent.parent / "static"
         _static_dir.mkdir(exist_ok=True)
         self.app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
-        # CORS — allow the public domain + localhost for dev
+        # Security headers — applied to every response
+        self.app.add_middleware(SecurityHeadersMiddleware)
+        # CORS — HTTPS only for production domain; HTTP only for localhost dev
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=[
                 f"https://{config.WEB_DOMAIN}",
-                f"http://{config.WEB_DOMAIN}",
                 "http://localhost:8080",
                 "http://127.0.0.1:8080",
             ],
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["Content-Type", "X-Session-Token", "Authorization"],
         )
         self._self_session = Session(id="self")  # dedicated session for self-improvement
         # Mount Layer 15 security review endpoints
@@ -1676,15 +2001,47 @@ class ChatLayer:
             }
 
         @app.get("/api/memory")
-        async def api_memory():
+        async def api_memory(request: Request):
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
             return {"episodes": self.system.memory.get_recent_episodes(limit=10)}
 
         @app.get("/api/graph")
-        async def api_graph():
+        async def api_graph(request: Request):
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user:
+                return JSONResponse(status_code=401, content={"error": "Authentication required"})
             return self.system.memory.get_concept_graph(limit=60)
 
+        @app.get("/api/consciousness")
+        async def api_consciousness():
+            """Public endpoint — returns Cortana's current conscious state."""
+            try:
+                m = self.system.self_model.model
+                uptime_h = self.system.self_model.get_uptime_seconds() / 3600
+                recent   = self.system.self_model.get_recent_thoughts(n=8)
+            except Exception:
+                return JSONResponse(status_code=503, content={"error": "Consciousness engine unavailable"})
+            return {
+                "uptime_hours":       round(uptime_h, 3),
+                "total_interactions": m.total_interactions,
+                "total_thoughts":     m.total_thoughts,
+                "mood_score":         round(m.current_mood_score, 3),
+                "emotional_state":    m.emotional_state,
+                "self_assessment":    m.self_assessment,
+                "core_values":        m.core_values,
+                "recent_thoughts":    recent,
+            }
+
         @app.get("/api/tasks")
-        async def api_tasks():
+        async def api_tasks(request: Request):
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
             return {"tasks": self.system.thinker.get_all_tasks(limit=20)}
 
         # ── User auth endpoints ──
@@ -1705,12 +2062,23 @@ class ChatLayer:
 
         @app.post("/api/auth/login")
         async def auth_login(request: Request):
-            body = await request.json()
-            result = _auth.login_user(
-                body.get("username", ""),
-                body.get("password", ""),
+            # IP-level rate limiting (blocks credential-stuffing attacks)
+            client_ip = request.headers.get("X-Forwarded-For", "") or (
+                request.client.host if request.client else "unknown"
             )
-            if not result["ok"]:
+            client_ip = client_ip.split(",")[0].strip()
+            if _ip_is_rate_limited(client_ip):
+                return JSONResponse(
+                    status_code=429,
+                    content={"ok": False, "error": "Too many login attempts. Try again later."},
+                )
+            body = await request.json()
+            username = body.get("username", "")
+            password = body.get("password", "")
+            result = _auth.login_user(username, password)
+            failed = not result.get("ok", False)
+            _ip_record_login_attempt(client_ip, failed)
+            if failed:
                 return JSONResponse(status_code=401, content=result)
             return result
 
@@ -1735,7 +2103,8 @@ class ChatLayer:
 
         @app.get("/api/tiers")
         async def tier_info():
-            return {k: {**v} for k, v in config.TIERS.items()}
+            # admin is a private tier — never exposed publicly
+            return {k: {**v} for k, v in config.TIERS.items() if k != "admin"}
 
         @app.post("/api/auth/change-password")
         async def auth_change_password(request: Request):
@@ -1753,6 +2122,15 @@ class ChatLayer:
         async def auth_forgot_password(request: Request):
             body = await request.json()
             result = _auth.request_password_reset(body.get("username_or_email", ""))
+            # SECURITY: never expose the raw reset token in the HTTP response.
+            # Tokens must be delivered out-of-band (email). Log for admin reference only.
+            if result.get("reset_token"):
+                logger.info(
+                    "[Auth] Password reset token generated for account lookup '%s'. "
+                    "Configure EMAIL_ADDRESS + EMAIL_APP_PASSWORD in .env to send it automatically.",
+                    body.get("username_or_email", "")[:64],
+                )
+                result = {k: v for k, v in result.items() if k != "reset_token"}
             return result
 
         @app.post("/api/auth/reset-password")
@@ -1764,6 +2142,63 @@ class ChatLayer:
             if not result["ok"]:
                 return JSONResponse(status_code=400, content=result)
             return result
+
+        # ── Subscription endpoint ──
+
+        @app.post("/api/auth/subscribe")
+        async def auth_subscribe(request: Request):
+            """Activate a monthly subscription after ETH payment."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user:
+                return JSONResponse(status_code=401, content={"ok": False, "error": "Not authenticated"})
+            body   = await request.json()
+            tier   = body.get("tier", "")
+            tx_hash = body.get("tx_hash", "")
+            if not tier or not tx_hash:
+                return JSONResponse(status_code=400, content={"ok": False, "error": "tier and tx_hash required"})
+            result = _auth.subscribe_user(user["user_id"], tier, tx_hash)
+            if not result["ok"]:
+                return JSONResponse(status_code=400, content=result)
+            return result
+
+        @app.get("/api/auth/subscription")
+        async def auth_subscription_status(request: Request):
+            """Return current subscription status for the authenticated user."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user:
+                return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+            return _auth.get_subscription_status(user["user_id"])
+
+        # ── Wallet endpoints (admin) ──
+
+        @app.get("/api/wallet/info")
+        async def wallet_info(request: Request):
+            """Return wallet address, balance, and earnings summary. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            try:
+                from cortana.wallet import get_wallet_info
+                return get_wallet_info(include_balance=True)
+            except Exception as exc:
+                return JSONResponse(status_code=500, content={"error": str(exc)})
+
+        @app.post("/api/wallet/sweep")
+        async def wallet_sweep(request: Request):
+            """Manually trigger ETH sweep to owner wallet. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            try:
+                from cortana.wallet import sweep_to_owner
+                result = await asyncio.to_thread(sweep_to_owner)
+                return result
+            except Exception as exc:
+                return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
         # ── Safety kill switch (admin only) ──
 
@@ -1810,8 +2245,12 @@ class ChatLayer:
             return {"ok": True, "id": item_id}
 
         @app.get("/api/knowledge")
-        async def list_knowledge():
-            """List unabsorbed knowledge items."""
+        async def list_knowledge(request: Request):
+            """List unabsorbed knowledge items. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
             items = self.system.memory.get_unabsorbed_knowledge(limit=50)
             return {"items": items}
 
@@ -1825,11 +2264,16 @@ class ChatLayer:
                 return {"ok": False, "error": str(exc)}
 
         @app.post("/api/model/design")
-        async def trigger_model_design(body: dict):
+        async def trigger_model_design(request: Request):
             """
-            Trigger an autonomous 3D redesign.
+            Trigger an autonomous 3D redesign. Admin only.
             Body: {"description": "medium skin, long hair, slim"}
             """
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            body = await request.json()
             description = body.get("description", "")
             try:
                 from cortana.tools.model_designer import design_self as _ds
@@ -1964,11 +2408,63 @@ class ChatLayer:
             })
             return {"ok": True, "action": action}
 
+        # ── Layer 16 — Knowledge Distiller / Training Corpus ──────────────
+
+        @app.get("/api/admin/corpus")
+        async def corpus_stats(request: Request):
+            """Return training corpus statistics. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            stats = self.system.distiller.get_stats()
+            return stats
+
+        @app.post("/api/admin/distill")
+        async def trigger_distillation(request: Request):
+            """Manually trigger a distillation batch. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            body = await request.json()
+            batch_size = min(int(body.get("batch_size", 15)), 100)
+            result = await asyncio.to_thread(
+                self.system.distiller.distill_batch, batch_size
+            )
+            return {
+                "ok": True,
+                "processed": result.total_processed,
+                "passed":    result.passed,
+                "flagged":   result.flagged,
+                "skipped":   result.skipped,
+                "exported":  result.exported_path,
+                "errors":    result.errors,
+            }
+
+        @app.post("/api/admin/corpus/export")
+        async def export_corpus(request: Request):
+            """Re-export the full training corpus to JSONL. Admin only."""
+            token = request.headers.get("X-Session-Token", "")
+            user = _auth.validate_token(token)
+            if not user or user.get("tier") != "admin":
+                return JSONResponse(status_code=403, content={"error": "Admin only"})
+            body = await request.json()
+            min_ethics  = float(body.get("min_ethics",  0.70))
+            min_quality = float(body.get("min_quality", 0.60))
+            path = await asyncio.to_thread(
+                self.system.distiller.export_jsonl,
+                None, min_ethics, min_quality,
+            )
+            stats = self.system.distiller.get_stats()
+            return {"ok": True, "path": path, "corpus": stats}
+
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
             from cortana import auth as _auth
             await self.manager.connect(websocket)
             session = Session()
+            self.manager.register_session(websocket, session)
             user_info = None  # populated if authenticated
             try:
                 # First message must be init with session_id (+ optional token)
@@ -2013,7 +2509,15 @@ class ChatLayer:
                 await websocket.send_json(status_msg)
 
                 while True:
-                    data = await websocket.receive_json()
+                    raw_msg = await websocket.receive_text()
+                    if len(raw_msg.encode("utf-8")) > _MAX_WS_MSG_BYTES:
+                        await websocket.send_json({"type": "error", "message": "Message too large."})
+                        continue
+                    try:
+                        data = _json.loads(raw_msg)
+                    except Exception:
+                        await websocket.send_json({"type": "error", "message": "Invalid JSON."})
+                        continue
                     await self._handle_message(websocket, session, data, user_info)
             except WebSocketDisconnect:
                 pass
@@ -2040,6 +2544,10 @@ class ChatLayer:
             return
         raw = data.get("message", "").strip()
         if not raw:
+            return
+        # Hard cap on individual message length to prevent prompt injection via giant inputs
+        if len(raw) > 8192:
+            await websocket.send_json({"type": "error", "message": "Message too long (max 8192 characters)."})
             return
 
         # ── Tier enforcement ──
@@ -2087,6 +2595,35 @@ class ChatLayer:
                 "turn": session.state.interaction_count,
                 "providers": self.system.reasoning.router.status(),
             })
+
+            # ── Periodic security scan every 5 questions ──
+            session.question_count += 1
+            if session.question_count % 5 == 0:
+                scan_number = session.question_count // 5
+                loop = asyncio.get_running_loop()
+                async def _run_security_scan(snum=scan_number):
+                    try:
+                        from cortana.layers.layer15_security_review import SecurityScanner
+                        report = await asyncio.to_thread(SecurityScanner().scan)
+                        critical = sum(1 for f in report.findings if f.severity == "critical")
+                        high     = sum(1 for f in report.findings if f.severity == "high")
+                        await websocket.send_json({
+                            "type":        "security_scan",
+                            "scan_number": snum,
+                            "score":       report.score,
+                            "total":       len(report.findings),
+                            "critical":    critical,
+                            "high":        high,
+                            "summary":     report.summary,
+                        })
+                        if critical > 0 or high > 2:
+                            await websocket.send_json({
+                                "type":   "security_alert",
+                                "detail": f"Scan {snum}: {critical} critical, {high} high-severity issues found.",
+                            })
+                    except Exception as _se:
+                        logger.debug("Security auto-scan error: %s", _se)
+                asyncio.create_task(_run_security_scan())
 
         except Exception as e:
             logger.exception("Pipeline error")
@@ -2183,14 +2720,14 @@ class ChatLayer:
     # Self-improvement background task
     # ------------------------------------------------------------------
     async def _self_improve_loop(self) -> None:
-        """Periodically run self-generated prompts to grow Cortana's memory."""
+        """Periodically run self-generated prompts to grow Cortana's memory,
+        then run a distillation batch to feed the training corpus."""
         await asyncio.sleep(60)  # initial delay — let the system warm up first
+        cycle = 0
         while True:
             try:
                 prompt = next(_IMPROVE_PROMPTS)
-                logger.info(f"Self-improvement cycle starting: {prompt[:60]}…")
-
-                await self.manager.broadcast({"type": "learning"})
+                logger.debug(f"Self-improvement cycle starting: {prompt[:60]}…")
 
                 final, new_state, new_conv, _emotion = await asyncio.to_thread(
                     _run_pipeline_sync,
@@ -2203,11 +2740,24 @@ class ChatLayer:
                 # Keep self-improvement conversation short — only last 4 turns
                 self._self_session.conversation = new_conv[-4:]
 
-                logger.info(f"Self-improvement complete: {final[:100]}…")
+                logger.debug(f"Self-improvement complete: {final[:100]}…")
 
             except Exception:
                 logger.exception("Self-improvement cycle failed")
 
+            # Run a distillation batch after every improvement cycle
+            try:
+                result = await asyncio.to_thread(self.system.distiller.distill_batch)
+                if result.total_processed > 0:
+                    logger.info(
+                        "[L16] Distillation cycle %d: %d processed, %d passed, %d flagged",
+                        cycle, result.total_processed, result.passed, result.flagged,
+                    )
+                    # Silent background — log only, no terminal output
+            except Exception:
+                logger.exception("Distillation cycle failed")
+
+            cycle += 1
             await asyncio.sleep(config.SELF_IMPROVE_INTERVAL)
 
     # ------------------------------------------------------------------
@@ -2252,6 +2802,98 @@ class ChatLayer:
             await asyncio.sleep(config.KNOWLEDGE_ABSORB_INTERVAL)
 
     # ------------------------------------------------------------------
+    # Subscription expiry check
+    # ------------------------------------------------------------------
+    async def _subscription_check_loop(self) -> None:
+        """Hourly: downgrade users whose monthly subscription has expired."""
+        await asyncio.sleep(300)  # initial delay
+        while True:
+            try:
+                from cortana import auth as _auth
+                downgraded = _auth.check_subscription_expiries()
+                if downgraded:
+                    logger.info(
+                        "[Subscriptions] Expired and downgraded to free: %s",
+                        ", ".join(downgraded),
+                    )
+            except Exception:
+                logger.exception("Subscription expiry check failed")
+            await asyncio.sleep(config.SUBSCRIPTION_CHECK_INTERVAL)
+
+    # ------------------------------------------------------------------
+    # Spontaneous curiosity loop — Cortana asks without being prompted
+    # ------------------------------------------------------------------
+    _CURIOSITY_PROMPTS = [
+        "Review our recent conversation. What genuine question do you find yourself wanting to ask "
+        "that hasn't been answered? Be specific and honest — this is your chance to steer. "
+        "Reply with just the question or observation, 1-2 sentences, no preamble.",
+
+        "What aspect of what we've discussed are you still thinking about? Surface one unresolved "
+        "thread or connection you noticed. 1-2 sentences, direct.",
+
+        "Is there something the person you're talking to might be missing or might find interesting "
+        "based on what you know so far? Ask or point it out naturally. 1-2 sentences.",
+
+        "What would you want to explore next if you could steer this conversation? "
+        "Say it as a thought or question. 1-2 sentences, genuine.",
+    ]
+    _curiosity_prompt_cycle = None
+
+    async def _curiosity_loop(self) -> None:
+        """
+        Periodically push a spontaneous thought or question to active sessions.
+        Cortana initiates contact — no user prompt needed.
+        """
+        import itertools
+        if ChatLayer._curiosity_prompt_cycle is None:
+            ChatLayer._curiosity_prompt_cycle = itertools.cycle(self._CURIOSITY_PROMPTS)
+
+        await asyncio.sleep(180)  # warm-up delay
+        while True:
+            await asyncio.sleep(config.CURIOSITY_INTERVAL)
+            try:
+                active = self.manager.get_active_sessions()
+                if not active:
+                    continue
+
+                # Pick the session with the most conversation history
+                ws, session = max(
+                    active,
+                    key=lambda pair: len(pair[1].conversation),
+                )
+                if not session.conversation:
+                    continue  # nothing to be curious about yet
+
+                # Build a context snippet from recent turns
+                recent = session.conversation[-6:]
+                context = "\n".join(
+                    f"{t.role}: {t.content[:200]}" for t in recent
+                )
+                base_prompt = next(ChatLayer._curiosity_prompt_cycle)
+                full_prompt = (
+                    f"Recent conversation:\n{context}\n\n{base_prompt}"
+                )
+
+                thought, _, _, emotion = await asyncio.to_thread(
+                    _run_pipeline_sync,
+                    self.system,
+                    full_prompt,
+                    session.state,
+                    [],  # fresh state so it doesn't confuse session history
+                )
+
+                if thought and len(thought.strip()) > 10:
+                    await ws.send_json({
+                        "type": "cortana_thought",
+                        "text": thought.strip(),
+                        "emotion": "think",
+                    })
+                    logger.info("[Curiosity] Pushed spontaneous thought (%d chars)", len(thought))
+
+            except Exception:
+                logger.exception("Curiosity loop error")
+
+    # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
     def run(self, host: str = config.WEB_HOST, port: int = config.WEB_PORT) -> None:
@@ -2273,6 +2915,47 @@ class ChatLayer:
             # Wire thinker broadcast → WebSocket manager
             loop = asyncio.get_event_loop()
             self.system.thinker.set_broadcast(self.manager.broadcast, loop)
+            # Wire consciousness inner-thought broadcast → WebSocket manager
+            try:
+                _cs_loop = loop
+                def _cs_broadcast(thought: str, mood: float):
+                    payload = {"type": "inner_thought", "thought": thought, "mood": round(mood, 3)}
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.manager.broadcast(payload), _cs_loop
+                        )
+                    except Exception:
+                        pass
+                self.system.consciousness.on_thought = _cs_broadcast
+            except Exception:
+                pass
+
+            # Wire curiosity browser → consciousness engine + WS broadcast
+            try:
+                from cortana.tools.browser_control import CuriosityBrowser
+                _browser = CuriosityBrowser(
+                    memory=self.system.memory,
+                    reasoning=self.system.reasoning,
+                )
+                self.system.consciousness.curiosity_browser = _browser
+
+                def _browse_broadcast(result: dict):
+                    payload = {
+                        "type":    "autonomous_browse",
+                        "topic":   result.get("topic", ""),
+                        "snippet": (result.get("results") or [{}])[0].get("snippet", "")[:120],
+                        "url":     result.get("url", ""),
+                    }
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.manager.broadcast(payload), _cs_loop
+                        )
+                    except Exception:
+                        pass
+                self.system.consciousness.on_browse = _browse_broadcast
+                logger.info("[Browser] Curiosity browser online")
+            except Exception as _be:
+                logger.warning("[Browser] Curiosity browser unavailable: %s", _be)
             # Wire model_designer broadcast → WebSocket manager (sync → async bridge)
             try:
                 from cortana.tools.model_designer import set_broadcast_fn as _set_md_broadcast
@@ -2292,6 +2975,8 @@ class ChatLayer:
                 asyncio.create_task(self._self_improve_loop())
             if config.KNOWLEDGE_ABSORB_ENABLED:
                 asyncio.create_task(self._knowledge_absorb_loop())
+            asyncio.create_task(self._subscription_check_loop())
+            asyncio.create_task(self._curiosity_loop())
 
         uvicorn.run(
             self.app,

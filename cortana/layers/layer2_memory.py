@@ -14,7 +14,7 @@ import time
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from cortana.models.schemas import ConversationTurn
+from cortana.models.schemas import ConversationTurn, ConceptNode, RelationEdge
 
 from cortana import config
 
@@ -127,11 +127,13 @@ class CortanaMemory:
                     reset_expires       DATETIME DEFAULT NULL
                 )
             """)
-            # Migrate existing DBs that lack the new password columns
+            # Migrate existing DBs that lack new columns
             for _col, _def in [
-                ("password_changed_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("reset_token",         "TEXT DEFAULT ''"),
-                ("reset_expires",       "DATETIME DEFAULT NULL"),
+                ("password_changed_at",  "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+                ("reset_token",          "TEXT DEFAULT ''"),
+                ("reset_expires",        "DATETIME DEFAULT NULL"),
+                ("subscription_expires", "DATETIME DEFAULT NULL"),
+                ("subscription_tx",      "TEXT DEFAULT ''"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE users ADD COLUMN {_col} {_def}")
@@ -155,6 +157,34 @@ class CortanaMemory:
                     stamp     DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Layer 16 — Training corpus
+            # Stores ethics-filtered, quality-scored conversation pairs
+            # for fine-tuning the new LLM.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS training_corpus (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id    TEXT    DEFAULT '',
+                    user_msg      TEXT    NOT NULL,
+                    assistant_msg TEXT    NOT NULL,
+                    ethics_score  REAL    DEFAULT 0.0,
+                    quality_score REAL    DEFAULT 0.0,
+                    factual_type  TEXT    DEFAULT 'unknown',
+                    topics        TEXT    DEFAULT '[]',
+                    flagged       INTEGER DEFAULT 0,
+                    flag_reason   TEXT    DEFAULT '',
+                    distilled_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    exported      INTEGER DEFAULT 0
+                )
+            """)
+            # Add distilled tracking column to session_turns (migration-safe)
+            for _col, _def in [
+                ("distilled",    "INTEGER DEFAULT 0"),
+                ("flag_reason",  "TEXT DEFAULT ''"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE session_turns ADD COLUMN {_col} {_def}")
+                except Exception:
+                    pass  # already exists
             conn.commit()
 
     # ------------------------------------------------------------------
@@ -364,6 +394,34 @@ class CortanaMemory:
             ).fetchall()
         return [{"content": r[0], "source": r[1], "stamp": r[2]} for r in rows]
 
+    def get_concept_nodes(self, limit: int = 30) -> List[ConceptNode]:
+        """Return top concepts as typed ConceptNode objects for Layer 17."""
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            rows = conn.execute(
+                "SELECT topic, summary, confidence, evidence_count FROM concepts "
+                "ORDER BY confidence * evidence_count DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [ConceptNode(topic=r[0], summary=r[1], confidence=r[2], evidence_count=r[3])
+                for r in rows]
+
+    def get_relation_edges(self, limit: int = 60) -> List[RelationEdge]:
+        """Return top relationships as typed RelationEdge objects for Layer 17."""
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            rows = conn.execute(
+                "SELECT source, target, relation, confidence FROM relationships "
+                "ORDER BY confidence DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [RelationEdge(source=r[0], target=r[1], relation=r[2], confidence=r[3])
+                for r in rows]
+
+    def get_recent_episode_strings(self, limit: int = 20) -> List[str]:
+        """Return recent episode content strings for RNN encoding."""
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            rows = conn.execute(
+                "SELECT content FROM episodes ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [r[0] for r in rows]
+
     # ------------------------------------------------------------------
     # Working memory (in-process dict, session-scoped)
     # ------------------------------------------------------------------
@@ -403,3 +461,156 @@ class CortanaMemory:
         with sqlite3.connect(config.SQLITE_PATH) as conn:
             conn.execute("UPDATE knowledge_bin SET absorbed=1 WHERE id=?", (item_id,))
             conn.commit()
+
+    # ------------------------------------------------------------------
+    # Layer 16 — Training corpus
+    # ------------------------------------------------------------------
+
+    def get_undistilled_pairs(self, limit: int = 15) -> List[Dict]:
+        """
+        Fetch conversation pairs (user + next assistant turn) that have
+        not yet been processed by the distiller.
+        Returns list of dicts with keys: user_id, session_id, user_msg, assistant_msg.
+        """
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            # Self-join: match each user turn with its immediate following
+            # assistant turn within the same session
+            rows = conn.execute(
+                """
+                SELECT u.id   AS user_id,
+                       u.session_id,
+                       u.content AS user_msg,
+                       (SELECT a.content
+                        FROM session_turns a
+                        WHERE a.session_id = u.session_id
+                          AND a.role = 'assistant'
+                          AND a.id > u.id
+                        ORDER BY a.id ASC
+                        LIMIT 1) AS assistant_msg
+                FROM session_turns u
+                WHERE u.role      = 'user'
+                  AND u.distilled = 0
+                ORDER BY u.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            user_id, session_id, user_msg, assistant_msg = row
+            # Skip pairs where the assistant turn is missing or very short
+            if not assistant_msg or len(assistant_msg.strip()) < 10:
+                continue
+            results.append({
+                "user_id":      user_id,
+                "session_id":   session_id or "",
+                "user_msg":     user_msg,
+                "assistant_msg": assistant_msg,
+            })
+        return results
+
+    def mark_turns_distilled(
+        self,
+        user_turn_ids: List[int],
+        flagged: bool = False,
+        flag_reason: str = "",
+    ) -> None:
+        """Mark user turns as processed by the distiller."""
+        if not user_turn_ids:
+            return
+        placeholders = ",".join("?" * len(user_turn_ids))
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            conn.execute(
+                f"UPDATE session_turns SET distilled=1, flag_reason=? "
+                f"WHERE id IN ({placeholders})",
+                [flag_reason] + user_turn_ids,
+            )
+            conn.commit()
+
+    def save_training_pair(
+        self,
+        session_id:    str,
+        user_msg:      str,
+        assistant_msg: str,
+        ethics_score:  float,
+        quality_score: float,
+        factual_type:  str,
+        topics:        List[str],
+        flagged:       bool,
+        flag_reason:   str,
+    ) -> int:
+        """Insert a distilled pair into the training corpus. Returns row id."""
+        import json as _json
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            cur = conn.execute(
+                """INSERT INTO training_corpus
+                   (session_id, user_msg, assistant_msg, ethics_score, quality_score,
+                    factual_type, topics, flagged, flag_reason)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    session_id, user_msg, assistant_msg,
+                    ethics_score, quality_score,
+                    factual_type, _json.dumps(topics),
+                    int(flagged), flag_reason,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_corpus_stats(self) -> Dict:
+        """Return aggregate statistics about the training corpus."""
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            totals = conn.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN flagged=0 THEN 1 ELSE 0 END) AS clean,
+                          SUM(CASE WHEN flagged=1 THEN 1 ELSE 0 END) AS flagged,
+                          AVG(ethics_score)  AS avg_ethics,
+                          AVG(quality_score) AS avg_quality
+                   FROM training_corpus"""
+            ).fetchone()
+            by_type = conn.execute(
+                """SELECT factual_type, COUNT(*) as count
+                   FROM training_corpus WHERE flagged=0
+                   GROUP BY factual_type ORDER BY count DESC"""
+            ).fetchall()
+            pending = conn.execute(
+                "SELECT COUNT(*) FROM session_turns WHERE role='user' AND distilled=0"
+            ).fetchone()[0]
+
+        return {
+            "total":       totals[0] or 0,
+            "clean":       totals[1] or 0,
+            "flagged":     totals[2] or 0,
+            "avg_ethics":  round(totals[3] or 0, 3),
+            "avg_quality": round(totals[4] or 0, 3),
+            "by_type":     {r[0]: r[1] for r in by_type},
+            "pending_pairs": pending,
+        }
+
+    def get_exportable_pairs(
+        self,
+        min_ethics:  float = 0.70,
+        min_quality: float = 0.60,
+        limit:       int   = 50_000,
+    ) -> List[Dict]:
+        """Return all clean training pairs above the given thresholds."""
+        with sqlite3.connect(config.SQLITE_PATH) as conn:
+            rows = conn.execute(
+                """SELECT id, session_id, user_msg, assistant_msg,
+                          ethics_score, quality_score, factual_type, topics
+                   FROM training_corpus
+                   WHERE flagged=0
+                     AND ethics_score  >= ?
+                     AND quality_score >= ?
+                   ORDER BY id ASC LIMIT ?""",
+                (min_ethics, min_quality, limit),
+            ).fetchall()
+        return [
+            {
+                "id": r[0], "session_id": r[1],
+                "user_msg": r[2], "assistant_msg": r[3],
+                "ethics_score": r[4], "quality_score": r[5],
+                "factual_type": r[6], "topics": r[7],
+            }
+            for r in rows
+        ]

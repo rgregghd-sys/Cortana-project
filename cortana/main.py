@@ -70,6 +70,10 @@ from cortana.layers.layer9_reflection import ReflectionLayer
 from cortana.layers.layer10_security import SecurityLayer
 from cortana.layers.layer11_patcher import PatchWriterLayer
 from cortana.layers.layer12_notifier import PatchImplementerLayer
+from cortana.layers.layer16_distiller import KnowledgeDistiller
+from cortana.layers.layer17_cognition import CognitiveLayer
+from cortana.consciousness.self_model import PersistentSelfModel
+from cortana.consciousness.engine import ConsciousnessEngine
 from cortana.background.thinker import BackgroundThinker
 from cortana.ui import terminal as ui
 
@@ -156,9 +160,36 @@ class CortanaSystem:
         self.notifier = PatchImplementerLayer()
         ui.print_system("Layer 12 [Patch Implementer] online", level="ok")
 
+        # Layer 16 — Knowledge Distiller
+        self.distiller = KnowledgeDistiller()
+        ui.print_system("Layer 16 [Knowledge Distiller] online — training corpus ready", level="ok")
+
+        # Layer 17 — Cognitive Architecture (Working Memory + Attention + Goal Stack + GNN/RNN)
+        self.cognition = CognitiveLayer()
+        ui.print_system("Layer 17 [Cognition] online — Working Memory / Attention / Goal Stack / Neural active", level="ok")
+
+        # Consciousness — persistent self-model + always-awake inner loop
+        self.self_model   = PersistentSelfModel()
+        self.consciousness = ConsciousnessEngine(
+            self_model=self.self_model,
+            cognitive_layer=self.cognition,
+        )
+        if config.CONSCIOUSNESS_ENABLED:
+            self.consciousness.start()
+            ui.print_system(
+                f"Consciousness Engine online — Cortana has been awake "
+                f"{self.self_model.get_uptime_seconds()/3600:.2f}h | "
+                f"Thoughts: {self.self_model.model.total_thoughts}",
+                level="ok",
+            )
+        else:
+            ui.print_system("Consciousness Engine disabled (CONSCIOUSNESS_ENABLED=false)", level="warn")
+
         # Background Thinker — persistent async reasoning engine
         self.thinker = BackgroundThinker(db_path=config.SQLITE_PATH)
         self.thinker.set_reasoning(self.reasoning)
+        # Give consciousness engine access to reasoning for LLM-based thoughts
+        self.consciousness.attach_reasoning(self.reasoning)
         ui.print_system("Background Thinker online — iterative reasoning ready", level="ok")
 
         ui.print_system("Layers 7 [Sub-Agents] + 8 [Tools] load on demand", level="info")
@@ -475,6 +506,42 @@ class CortanaSystem:
             state,
         )
 
+        # --- Layer 17: Cognitive Architecture ---
+        # Fetch typed concept graph from Tier 3 memory for GNN + working memory
+        try:
+            _concepts   = self.memory.get_concept_nodes(limit=30)
+            _relations  = self.memory.get_relation_edges(limit=60)
+            _ep_strings = self.memory.get_recent_episode_strings(limit=20)
+
+            cognitive_state = self.cognition.process(
+                perceived=perceived,
+                memories=memories,
+                concepts=_concepts,
+                relations=_relations,
+                conversation=conversation,
+                state=state,
+            )
+
+            # Neural-augment memory recall order
+            if memories:
+                memories = self.cognition.neural_augmented_recall(
+                    query=perceived.content,
+                    episodes=_ep_strings,
+                    concepts=_concepts,
+                    relations=_relations,
+                    base_results=memories,
+                )
+
+            # Inject cognitive context into identity prompt
+            if cognitive_state.cognitive_context:
+                identity_prompt = (
+                    identity_prompt
+                    + "\n\n--- Cognitive State ---\n"
+                    + cognitive_state.cognitive_context
+                )
+        except Exception as _cog_err:
+            ui.print_system(f"[L17] Cognitive layer error (non-fatal): {_cog_err}", level="warn")
+
         # --- Decide: simple path or full agentic path ---
         tasks = []
         sub_agent_context = ""
@@ -606,6 +673,13 @@ class CortanaSystem:
         if display:
             display.stop()
 
+        # --- Core Laws enforcement (synchronous, every response) ---
+        # Runs inline before the response reaches the user — not fire-and-forget.
+        if response and not l4_failed:
+            response, _law_overridden = self.security.enforce_core_laws(response)
+            if _law_overridden:
+                ui.print_system("[L10] Core Law violation detected — response overridden", level="warn")
+
         # --- Background: L10 Security + L9 Reflection ---
         # Fire-and-forget: user already has the streamed response; post-processing
         # runs in a background thread so it doesn't add latency.
@@ -623,6 +697,12 @@ class CortanaSystem:
 
         # Fast emotion heuristic — L9's richer version runs in background
         emotion = _fast_emotion(response, perceived.intent)
+
+        # Notify consciousness engine of this interaction
+        try:
+            self.consciousness.on_interaction(emotion)
+        except Exception:
+            pass
 
         new_state = CortanaState(interaction_count=state.interaction_count + 1)
         new_conversation = list(conversation) + [
@@ -693,6 +773,10 @@ class CortanaSystem:
                 ui.print_system("State and conversation cleared.", level="ok")
                 continue
 
+            if raw.strip().lower() == "/consciousness":
+                ui.print_system(self.consciousness.get_consciousness_summary(), level="info")
+                continue
+
             try:
                 asyncio.run(self.process(raw))
             except KeyboardInterrupt:
@@ -715,6 +799,7 @@ def _print_help() -> None:
     table.add_row("/help", "Show this help")
     table.add_row("/status", "Show system state and active agents")
     table.add_row("/memory", "Show recent memory entries")
+    table.add_row("/consciousness", "Show consciousness state (uptime, mood, recent thoughts)")
     table.add_row("/reset", "Reset state and conversation")
     table.add_row("/exit", "Disconnect from Cortana")
     ui.console.print(table)

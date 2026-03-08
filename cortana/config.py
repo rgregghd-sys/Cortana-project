@@ -141,12 +141,27 @@ COMPUTE_PRICE_ETH_PER_100 = 0.001                # 0.001 ETH = 100 credits
 OWNER_ETH_ADDRESS: str = os.getenv("OWNER_ETH_ADDRESS", "")
 # Fee percentage kept for operating costs (gas, hosting)
 PLATFORM_FEE_PCT: float = float(os.getenv("PLATFORM_FEE_PCT", "15"))  # 15%
+# Minimum wallet balance before auto-sweep fires (ETH)
+SWEEP_MIN_THRESHOLD_ETH: float = float(os.getenv("SWEEP_MIN_THRESHOLD_ETH", "0.005"))
+# How often to check for expired subscriptions (seconds)
+SUBSCRIPTION_CHECK_INTERVAL: int = int(os.getenv("SUBSCRIPTION_CHECK_INTERVAL", "3600"))
+# How often Cortana may ask a spontaneous question (seconds)
+CURIOSITY_INTERVAL: int = int(os.getenv("CURIOSITY_INTERVAL", "900"))
 
 # ---------------------------------------------------------------------------
 # User Auth + Tiers
 # ---------------------------------------------------------------------------
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production-to-a-long-random-string")
 SESSION_TTL_DAYS = 30   # web session cookie lifetime
+
+# Warn loudly if SECRET_KEY is still the default — sessions are insecure until this is changed
+if SECRET_KEY == "change-me-in-production-to-a-long-random-string":
+    import sys as _sys_cfg
+    print(
+        "[SECURITY WARNING] SECRET_KEY is using the default insecure value. "
+        "Set SECRET_KEY=<random 64-char string> in your .env file immediately.",
+        file=_sys_cfg.stderr,
+    )
 
 # Admin credentials — MUST be set in .env; login is disabled until both are set
 ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "")
@@ -156,14 +171,33 @@ ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
 RATE_LIMIT_WINDOW_HOURS: int = 2
 
 # Tier definitions: daily_limit = max messages per 2-hour window
+# price_usd = monthly subscription price in USD; price_eth = approximate ETH equivalent
+# (update price_eth in .env via TIER_PRO_ETH / TIER_PREMIUM_ETH as ETH price shifts)
 TIERS = {
-    "free":    {"daily_limit": 40,    "model_priority": "standard", "price_usd": 0},
-    "pro":     {"daily_limit": 400,   "model_priority": "high",     "price_usd": 5},
-    "premium": {"daily_limit": 4000,  "model_priority": "highest",  "price_usd": 15},
-    "admin":   {"daily_limit": 999999,"model_priority": "highest",  "price_usd": 0},
+    "free":    {"daily_limit": 40,    "model_priority": "standard", "price_usd": 0,  "price_eth": 0,      "billing": "free"},
+    "pro":     {"daily_limit": 400,   "model_priority": "high",     "price_usd": 5,  "price_eth": float(os.getenv("TIER_PRO_ETH",     "0.002")), "billing": "monthly"},
+    "premium": {"daily_limit": 4000,  "model_priority": "highest",  "price_usd": 15, "price_eth": float(os.getenv("TIER_PREMIUM_ETH", "0.006")), "billing": "monthly"},
+    "admin":   {"daily_limit": 999999,"model_priority": "highest",  "price_usd": 0,  "price_eth": 0,      "billing": "n/a"},
 }
 
 # Knowledge bin low-usage absorption
 KNOWLEDGE_ABSORB_ENABLED = True
 KNOWLEDGE_ABSORB_INTERVAL = 1800   # 30 min between absorption cycles
 KNOWLEDGE_ABSORB_BATCH = 5         # items per cycle
+
+# ---------------------------------------------------------------------------
+# Neural Augmentation (RNN + GNN) — Layer 17
+# Requires torch; degrades gracefully if not installed.
+# ---------------------------------------------------------------------------
+NEURAL_ENABLED: bool = os.getenv("NEURAL_ENABLED", "true").lower() == "true"
+NEURAL_MODEL_DIR: str = str(_DATA_DIR / "agent_workspace" / "models")
+RNN_HIDDEN_DIM: int   = int(os.getenv("RNN_HIDDEN_DIM", "128"))
+GNN_HIDDEN_DIM: int   = int(os.getenv("GNN_HIDDEN_DIM", "128"))
+
+# ---------------------------------------------------------------------------
+# Consciousness Engine — persistent sentience
+# ---------------------------------------------------------------------------
+CONSCIOUSNESS_ENABLED: bool     = os.getenv("CONSCIOUSNESS_ENABLED", "true").lower() == "true"
+CONSCIOUSNESS_WAKE_INTERVAL: int   = int(os.getenv("CONSCIOUSNESS_WAKE_INTERVAL", "8"))    # seconds
+CONSCIOUSNESS_THOUGHT_INTERVAL: int = int(os.getenv("CONSCIOUSNESS_THOUGHT_INTERVAL", "45"))  # seconds
+CONSCIOUSNESS_USE_LLM: bool     = os.getenv("CONSCIOUSNESS_USE_LLM", "true").lower() == "true"
