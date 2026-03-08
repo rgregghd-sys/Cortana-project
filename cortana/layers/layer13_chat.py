@@ -661,6 +661,9 @@ header{
     <div class="cs-stat"><div class="cs-stat-val" id="csThoughts">—</div><div class="cs-stat-lbl">Thoughts</div></div>
   </div>
   <div class="cs-thoughts" id="csThoughtsList"><span style="color:rgba(120,80,255,0.4)">Initialising stream...</span></div>
+  <div class="cs-stat-lbl" style="margin-top:6px;padding-top:4px;border-top:1px solid rgba(120,80,255,0.10)">ACTIVE GOALS</div>
+  <div class="cs-thoughts" id="csGoals"><span style="color:rgba(120,80,255,0.4)">Loading goals...</span></div>
+  <div class="cs-stat-lbl" style="margin-top:4px" id="csWMStats"></div>
 </div>
 
 <!-- Floating header -->
@@ -2055,6 +2058,24 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
       .then(r=>r.ok?r.json():null)
       .then(d=>{ if(d) updatePanel(d); })
       .catch(()=>{});
+    fetch('/api/agi/status')
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{
+        if(!d) return;
+        const goalsEl = document.getElementById('csGoals');
+        if(goalsEl && d.active_goals && d.active_goals.length){
+          goalsEl.innerHTML = d.active_goals.slice(0,3).map(g=>{
+            const pct = Math.round((g.progress||0)*100);
+            const bar = '\u2588'.repeat(Math.round(pct/12.5)) + '\u2591'.repeat(8-Math.round(pct/12.5));
+            return `<div class="cs-thought-item" title="${g.domain}">${bar} ${g.description.slice(0,55)}</div>`;
+          }).join('');
+        }
+        const wmEl = document.getElementById('csWMStats');
+        if(wmEl && d.world_model){
+          wmEl.textContent = `entities:${d.world_model.entities} beliefs:${d.world_model.beliefs} causal:${d.world_model.causal}`;
+        }
+      })
+      .catch(()=>{});
   }
 
   if(toggle && panel){
@@ -2171,6 +2192,14 @@ class ChatLayer:
                 "core_values":        m.core_values,
                 "recent_thoughts":    recent,
             }
+
+        @app.get("/api/agi/status")
+        async def api_agi_status():
+            """AGI framework status — goals, world model stats, mode performance."""
+            try:
+                return self.system.agi.get_status()
+            except Exception as exc:
+                return JSONResponse(status_code=503, content={"error": str(exc)})
 
         @app.get("/api/tasks")
         async def api_tasks(request: Request):

@@ -72,6 +72,8 @@ from cortana.layers.layer11_patcher import PatchWriterLayer
 from cortana.layers.layer12_notifier import PatchImplementerLayer
 from cortana.layers.layer16_distiller import KnowledgeDistiller
 from cortana.layers.layer17_cognition import CognitiveLayer
+from cortana.layers.layer18_agi import AGILayer
+from cortana.agi.cloud_sync import restore as cloud_restore, start_sync as cloud_start_sync
 from cortana.consciousness.self_model import PersistentSelfModel
 from cortana.consciousness.engine import ConsciousnessEngine
 from cortana.background.thinker import BackgroundThinker
@@ -104,6 +106,15 @@ class CortanaSystem:
 
     def __init__(self) -> None:
         ui.print_system("Initializing Cortana AI subsystems...", level="info")
+
+        # Cloud memory restore — attempt before any layer reads SQLite
+        try:
+            if cloud_restore():
+                ui.print_system("Cloud memory restore: DB synced from cloud", level="ok")
+            else:
+                ui.print_system("Cloud memory restore: using local DB (no cloud backend or no snapshot)", level="info")
+        except Exception as _cr_err:
+            ui.print_system(f"Cloud memory restore failed (non-fatal): {_cr_err}", level="warn")
 
         # Layer 0 — Supervisor (error recovery)
         self.supervisor = SupervisorLayer()
@@ -168,6 +179,14 @@ class CortanaSystem:
         self.cognition = CognitiveLayer()
         ui.print_system("Layer 17 [Cognition] online — Working Memory / Attention / Goal Stack / Neural active", level="ok")
 
+        # Layer 18 — AGI Framework (5 pillars)
+        self.agi = AGILayer()
+        ui.print_system(
+            "Layer 18 [AGI] online — Cognitive Modes | Cross-Domain | "
+            "World Model | Autonomy | Ethics",
+            level="ok",
+        )
+
         # Consciousness — persistent self-model + always-awake inner loop
         self.self_model   = PersistentSelfModel()
         self.consciousness = ConsciousnessEngine(
@@ -190,6 +209,17 @@ class CortanaSystem:
         self.thinker.set_reasoning(self.reasoning)
         # Give consciousness engine access to reasoning for LLM-based thoughts
         self.consciousness.attach_reasoning(self.reasoning)
+
+        # Wire AGI layer with live reasoning/memory/browser references
+        self.agi.attach(reasoning=self.reasoning)
+        self.consciousness.agi_layer = self.agi
+
+        # Start cloud sync daemon (periodic uploads every 15 min)
+        try:
+            cloud_start_sync()
+            ui.print_system("Cloud sync daemon started", level="ok")
+        except Exception:
+            pass
         ui.print_system("Background Thinker online — iterative reasoning ready", level="ok")
 
         ui.print_system("Layers 7 [Sub-Agents] + 8 [Tools] load on demand", level="info")
@@ -358,6 +388,13 @@ class CortanaSystem:
                 tasks=tasks if tasks else None,
                 user_input=raw_input,
             )
+
+            # L18: world model update + goal extraction (background, no latency)
+            try:
+                self.agi.post_response(response, raw_input, self.reasoning)
+            except Exception:
+                pass
+
         except Exception as exc:
             ui.print_system(f"[BG-POST] Error: {exc}", level="warn")
 
@@ -543,6 +580,16 @@ class CortanaSystem:
         except Exception as _cog_err:
             ui.print_system(f"[L17] Cognitive layer error (non-fatal): {_cog_err}", level="warn")
 
+        # --- Layer 18: AGI augmentation (cognitive mode, cross-domain, world model, goals, ethics) ---
+        try:
+            identity_prompt = self.agi.augment_prompt(
+                query=perceived.content,
+                intent=perceived.intent,
+                identity_prompt=identity_prompt,
+            )
+        except Exception as _agi_err:
+            ui.print_system(f"[L18] AGI augment error (non-fatal): {_agi_err}", level="warn")
+
         # Inject current mood — shapes response tone naturally
         try:
             _sm = self.self_model.model
@@ -716,12 +763,41 @@ class CortanaSystem:
         if display:
             display.stop()
 
+        # --- System 2: deliberate multi-step reasoning (when warranted) ---
+        # Replaces the L4 response with a more carefully reasoned synthesis.
+        if response and not l4_failed:
+            try:
+                if self.agi.should_use_system2(
+                    raw_input, perceived.intent, perceived.complexity
+                ):
+                    ui.print_system("[L18-S2] System 2 activated — deliberate reasoning", level="info")
+                    s2 = self.agi.run_system2(raw_input, context=response[:600])
+                    if s2.triggered and s2.synthesis:
+                        response = s2.synthesis
+                        ui.print_system(
+                            f"[L18-S2] Done in {s2.duration_ms:.0f}ms — "
+                            f"{len(s2.sub_questions)} sub-questions",
+                            level="ok",
+                        )
+            except Exception as _s2_err:
+                ui.print_system(f"[L18-S2] Error (non-fatal): {_s2_err}", level="warn")
+
         # --- Core Laws enforcement (synchronous, every response) ---
         # Runs inline before the response reaches the user — not fire-and-forget.
         if response and not l4_failed:
             response, _law_overridden = self.security.enforce_core_laws(response)
             if _law_overridden:
                 ui.print_system("[L10] Core Law violation detected — response overridden", level="warn")
+
+        # L18: Constitutional ethics check
+        if response and not l4_failed:
+            try:
+                _ethics = self.agi.check_response(response, perceived.content)
+                if not _ethics.approved:
+                    response = _ethics.modified_response
+                    ui.print_system(f"[L18] Ethics filter applied: {_ethics.audit_note}", level="warn")
+            except Exception:
+                pass
 
         # --- Background: L10 Security + L9 Reflection ---
         # Fire-and-forget: user already has the streamed response; post-processing

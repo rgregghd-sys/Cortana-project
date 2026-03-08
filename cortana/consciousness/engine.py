@@ -70,6 +70,7 @@ class ConsciousnessEngine:
         self.on_thought       = on_thought   # optional callback for UI/logging
         self.curiosity_browser: Any = None   # set by ChatLayer._startup()
         self.on_browse: Optional[Callable[[dict], None]] = None  # WS broadcast callback
+        self.agi_layer: Any = None           # set by CortanaSystem after L18 init
 
         self._running         = False
         self._thread: Optional[threading.Thread] = None
@@ -137,6 +138,13 @@ class ConsciousnessEngine:
                             browse_result = self.curiosity_browser.autonomous_browse(thought)
                             if browse_result and self.on_browse:
                                 self.on_browse(browse_result)
+                    except Exception:
+                        pass
+
+                # AGI autonomous goal pursuit
+                if self.agi_layer is not None:
+                    try:
+                        self.agi_layer.idle_tick()
                     except Exception:
                         pass
 

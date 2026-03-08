@@ -201,3 +201,11 @@ CONSCIOUSNESS_ENABLED: bool     = os.getenv("CONSCIOUSNESS_ENABLED", "true").low
 CONSCIOUSNESS_WAKE_INTERVAL: int   = int(os.getenv("CONSCIOUSNESS_WAKE_INTERVAL", "8"))    # seconds
 CONSCIOUSNESS_THOUGHT_INTERVAL: int = int(os.getenv("CONSCIOUSNESS_THOUGHT_INTERVAL", "45"))  # seconds
 CONSCIOUSNESS_USE_LLM: bool     = os.getenv("CONSCIOUSNESS_USE_LLM", "true").lower() == "true"
+
+
+# ---------------------------------------------------------------------------
+# AGI Framework — five-pillar artificial general intelligence
+# ---------------------------------------------------------------------------
+AGI_ENABLED: bool             = os.getenv("AGI_ENABLED", "true").lower() == "true"
+AGI_IDLE_GOAL_PURSUIT: bool   = os.getenv("AGI_IDLE_GOAL_PURSUIT", "true").lower() == "true"
+AGI_ETHICS_STRICT: bool       = os.getenv("AGI_ETHICS_STRICT", "false").lower() == "true"
