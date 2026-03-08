@@ -915,11 +915,14 @@ function loadGLB(url) {
 loadGLB('/static/cortana.glb');
 
 // ═══════════════════════════════════════════════════════════
-//  PROCEDURAL ANIMATION SYSTEM
+//  PROCEDURAL ANIMATION + GESTURE SYSTEM
 // ═══════════════════════════════════════════════════════════
 const DEG = Math.PI / 180;
 function rand(a, b) { return a + Math.random() * (b - a); }
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+function smoothstep(t) { t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
 
+// ── Base animation state ──
 const anim = {
   posY: 0, rotX: 0, rotZ: 0, rotY: 0, scl: 1,
   tPosY: 0, tRotX: 0, tRotZ: 0, tRotY: 0, tScl: 1,
@@ -931,6 +934,7 @@ const anim = {
   idleTimer: 0, nextIdle: rand(5, 10),
 };
 
+// ── Emotion table ──
 const EMOTIONS = {
   idle:      { rX:  0, rZ:  0, rY:  0, pY:  0.000, sc: 1.00, bSpd: 1.0, bAmp: 1.0, dur: 0,  rim: 0x0044aa, rimI: 3.5, fill: 0x00d8ff, fillI: 1.5 },
   smile:     { rX: -3, rZ:  0, rY:  0, pY:  0.020, sc: 1.02, bSpd: 1.1, bAmp: 0.9, dur: 5,  rim: 0x0088ff, rimI: 5.0, fill: 0x00eeff, fillI: 2.5 },
@@ -950,9 +954,122 @@ function applyEmotion(name) {
   fillLight.color.setHex(e.fill); fillLight.intensity = e.fillI;
 }
 
+// ── Gesture system — time-limited overlays on top of base pose ──
+const gesture = {
+  _active: null,
+  _phase:  0,
+  _dur:    0,
+  _fn:     null,
+
+  // Each gesture returns {rX, rZ, rY, pY, scl} offsets
+  _clips: {
+    // Full-body wave: lateral oscillation + upward bounce
+    wave: { dur: 3.2, fn(t) {
+      const env  = smoothstep(t/0.3) * smoothstep((3.2-t)/0.4);
+      const freq = Math.sin(t * 6.5) * env;
+      const bounce = Math.abs(Math.sin(t * 3.2)) * 0.032 * env;
+      return { rZ: freq*0.30, rX: -0.06*env, pY: bounce, scl: 1+0.015*env };
+    }},
+
+    // Crossed arms: forward lean + rhythmic slow sway (held until released)
+    crossed_arms: { dur: 0, fn(t) {
+      const sway = Math.sin(t * 0.5) * 0.022;
+      const bob  = Math.sin(t * 0.9) * 0.008;
+      return { rX: 0.14, pY: -0.025 + bob, rZ: sway, scl: 0.98 };
+    }},
+
+    // Hand in air / question pose: lean back + upward reach + bob
+    question_raise: { dur: 3.0, fn(t) {
+      const rise  = smoothstep(Math.min(t/0.4, 1));
+      const fall  = smoothstep(Math.max((t-2.5)/0.5, 0));
+      const amt   = rise - fall;
+      const bob   = Math.sin(t * 5.5) * 0.014 * amt;
+      return { rX: -0.15*amt, pY: 0.06*amt + bob, rZ: -0.10*amt, scl: 1+0.02*amt };
+    }},
+
+    // Nod: quick forward/back head bob (x2)
+    nod: { dur: 1.4, fn(t) {
+      const bob = Math.sin(t * Math.PI * 2.8) * smoothstep(1-t/1.4) * 0.14;
+      return { rX: bob };
+    }},
+
+    // Thinking / chin scratch: side tilt + slow contemplative oscillation
+    thinking_pose: { dur: 0, fn(t) {
+      const osc = Math.sin(t * 0.7 + 0.4) * 0.035;
+      return { rX: 0.05, rZ: -0.16 + osc, pY: 0.01, scl: 0.99 };
+    }},
+
+    // Excited bounce: rapid upward bounces
+    excited: { dur: 1.8, fn(t) {
+      const env    = smoothstep(1 - t/1.8);
+      const bounce = Math.abs(Math.sin(t * 9.0)) * 0.042 * env;
+      const sway   = Math.sin(t * 4.5) * 0.10 * env;
+      return { pY: bounce, rZ: sway, scl: 1 + 0.02*env };
+    }},
+
+    // Shrug: rise + tilt left/right + drop
+    shrug: { dur: 2.2, fn(t) {
+      const up   = smoothstep(Math.min(t/0.35, 1));
+      const dn   = smoothstep(Math.max((t-1.6)/0.6, 0));
+      const amt  = up - dn;
+      const tilt = Math.sin(t*3.5)*0.06*amt;
+      return { pY: 0.04*amt, rZ: tilt, scl: 1+0.01*amt };
+    }},
+
+    // Turn and look: slow Y rotation + return
+    look_around: { dur: 2.8, fn(t) {
+      const dir = t < 1.4 ? 1 : -1;
+      const ph  = t < 1.4 ? t/1.4 : (t-1.4)/1.4;
+      const ang = dir * easeInOut(ph < 0.5 ? ph*2 : 2-ph*2) * 0.38;
+      return { rY: ang };
+    }},
+  },
+
+  play(name) {
+    const clip = this._clips[name];
+    if (!clip) return;
+    this._active = name;
+    this._phase  = 0;
+    this._dur    = clip.dur;
+    this._fn     = clip.fn;
+  },
+
+  stop() { this._active = null; this._phase = 0; this._fn = null; },
+
+  tick(delta) {
+    if (!this._fn) return { rX:0, rZ:0, rY:0, pY:0, scl:0 };
+    this._phase += delta;
+    if (this._dur > 0 && this._phase >= this._dur) {
+      this.stop();
+      return { rX:0, rZ:0, rY:0, pY:0, scl:0 };
+    }
+    const v = this._fn(this._phase);
+    return {
+      rX: v.rX||0, rZ: v.rZ||0, rY: v.rY||0,
+      pY: v.pY||0, scl: v.scl||0,
+    };
+  },
+};
+
+// ── Detect gesture from response text + emotion ──
+function detectGesture(text, emotion) {
+  const lo = text.toLowerCase();
+  const tail = lo.slice(-120);
+  if (/\b(hello|hi\b|hey\b|wave|greet|goodbye|bye\b|welcome)/.test(lo)) return 'wave';
+  if (/\?/.test(tail) && /\b(what|how|why|when|where|which|could you|can you|do you|would you)/.test(lo)) return 'question_raise';
+  if (/\b(interesting|exciting|great news|amazing|wonderful|excellent|brilliant)/.test(lo)) return 'excited';
+  if (/\b(i suppose|not sure|perhaps|maybe|unclear|uncertain|shrug)/.test(lo)) return 'shrug';
+  if (emotion === 'think') return 'thinking_pose';
+  if (emotion === 'smile' || emotion === 'laugh') return 'excited';
+  if (/\b(yes|correct|exactly|right|agreed|certainly|absolutely)/.test(lo)) return 'nod';
+  return null;
+}
+
+// ── Idle micro-behaviors ──
 function triggerIdleBehavior() {
-  if (anim.emotion !== 'idle' || anim.isTalking) return;
-  switch (Math.floor(rand(0, 5))) {
+  if (anim.emotion !== 'idle' || anim.isTalking || gesture._active) return;
+  const pick = Math.floor(rand(0, 8));
+  switch (pick) {
     case 0: anim.tRotY = -10*DEG; setTimeout(()=>{ if(anim.emotion==='idle') anim.tRotY=0; }, rand(1200,2200)); break;
     case 1: anim.tRotY =  10*DEG; setTimeout(()=>{ if(anim.emotion==='idle') anim.tRotY=0; }, rand(1200,2200)); break;
     case 2:
@@ -969,15 +1086,26 @@ function triggerIdleBehavior() {
       anim.breathSpeed=0.38; anim.breathAmp=2.3;
       setTimeout(()=>{ if(anim.emotion==='idle'){ anim.tRotX=0; anim.breathSpeed=1.0; anim.breathAmp=1.0; } }, 3400);
       break;
+    case 5: gesture.play('look_around'); break;
+    case 6: gesture.play('shrug'); break;
+    case 7:
+      // Weight shift — lean to one side
+      const side = Math.random()>0.5?1:-1;
+      anim.tRotZ = side*8*DEG; anim.tPosY = -0.01;
+      setTimeout(()=>{ if(anim.emotion==='idle'){anim.tRotZ=0;anim.tPosY=0;} }, rand(1500,2800));
+      break;
   }
 }
 
+// ── Main animation tick ──
 function tickAnimation(delta) {
   const k = 1 - Math.pow(0.0005, delta);
 
+  // Breathing
   anim.breathPhase += delta * 0.42 * anim.breathSpeed;
   const breath = Math.sin(anim.breathPhase) * 0.018 * anim.breathAmp;
 
+  // Yawn
   let yawnY = 0;
   if (anim.yawnActive) {
     anim.yawnPhase += delta * 0.62;
@@ -985,10 +1113,12 @@ function tickAnimation(delta) {
     else yawnY = Math.sin(anim.yawnPhase) * 0.05;
   }
 
+  // Ambient sway
   anim.swayPhase += delta * 0.16;
   const swayX = Math.sin(anim.swayPhase*0.9+1.3) * 0.006;
   const swayZ = Math.cos(anim.swayPhase*0.7)      * 0.004;
 
+  // Talking micro-motion
   let talkX = 0, talkY = 0;
   if (anim.isTalking || anim.talkDecay > 0.005) {
     anim.talkDecay = anim.isTalking
@@ -1001,23 +1131,29 @@ function tickAnimation(delta) {
 
   const laughY = anim.emotion==='laugh' ? Math.abs(Math.sin(anim.breathPhase*3.5))*0.038 : 0;
 
-  anim.rotX += (anim.tRotX+swayX+talkX - anim.rotX) * k*5;
-  anim.rotZ += (anim.tRotZ+swayZ        - anim.rotZ) * k*5;
-  anim.rotY += (anim.tRotY              - anim.rotY) * k*4;
-  anim.posY += (anim.tPosY+breath+yawnY+talkY+laughY - anim.posY) * k*7;
-  anim.scl  += (anim.tScl               - anim.scl)  * k*4;
+  // Gesture overlay
+  const g = gesture.tick(delta);
+
+  // Lerp base pose
+  anim.rotX += (anim.tRotX + swayX + talkX + g.rX - anim.rotX) * k * 5;
+  anim.rotZ += (anim.tRotZ + swayZ         + g.rZ - anim.rotZ) * k * 5;
+  anim.rotY += (anim.tRotY                 + g.rY - anim.rotY) * k * 4;
+  anim.posY += (anim.tPosY + breath + yawnY + talkY + laughY + g.pY - anim.posY) * k * 7;
+  anim.scl  += (anim.tScl                  + g.scl - anim.scl) * k * 4;
 
   modelPivot.rotation.x = anim.rotX;
-  modelPivot.rotation.y = anim.rotY + talkX*0.35;
+  modelPivot.rotation.y = anim.rotY + talkX * 0.35;
   modelPivot.rotation.z = anim.rotZ;
   modelPivot.position.y = anim.posY;
-  modelPivot.scale.setScalar(anim.scl);
+  modelPivot.scale.setScalar(Math.max(0.5, anim.scl));
 
+  // Emotion timeout
   if (anim.emotionTimer > 0) {
     anim.emotionTimer -= delta;
     if (anim.emotionTimer <= 0) applyEmotion('idle');
   }
 
+  // Idle behaviors
   anim.idleTimer += delta;
   if (anim.idleTimer >= anim.nextIdle) {
     anim.idleTimer=0; anim.nextIdle=rand(6,15);
@@ -1027,8 +1163,18 @@ function tickAnimation(delta) {
 
 // ── Public API ──
 window.setExpression     = (n) => applyEmotion(n);
-window.triggerExpression = (n) => applyEmotion(n);
-window._startTalking = () => { anim.isTalking=true;  anim.talkDecay=0.3; };
+window.triggerExpression = (n) => {
+  applyEmotion(n);
+  clearTimeout(window._exprT);
+  if (n !== 'idle') window._exprT = setTimeout(() => applyEmotion('idle'), 4000);
+};
+window.playGesture       = (n) => gesture.play(n);
+window.stopGesture       = ()  => gesture.stop();
+window.detectAndPlay     = (text, emotion) => {
+  const g = detectGesture(text, emotion);
+  if (g) gesture.play(g);
+};
+window._startTalking = () => { anim.isTalking=true;  anim.talkDecay=0.3; gesture.stop(); };
 window._stopTalking  = () => { anim.isTalking=false; };
 applyEmotion('idle');
 
@@ -1506,6 +1652,7 @@ function connect(){
       case 'response':
         removeThinking();
         triggerExpression(msg.emotion||'smile');
+        if(window.detectAndPlay) window.detectAndPlay(msg.text, msg.emotion||'idle');
         addMessage('cortana',msg.text);
         _memSaveTurn('assistant', msg.text);  // persist locally
         turnCount.textContent=msg.turn;

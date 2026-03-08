@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -295,15 +295,27 @@ def get_security_router() -> APIRouter:
     router = APIRouter(prefix="/api/security", tags=["security"])
 
     @router.get("/report")
-    async def get_report():
+    async def get_report(request: Request):
+        """Return the latest security report. Admin only."""
+        from cortana import auth as _auth
+        token = request.headers.get("X-Session-Token", "")
+        user = _auth.validate_token(token)
+        if not user or user.get("tier") != "admin":
+            return JSONResponse(status_code=403, content={"error": "Admin only"})
         report = scanner.get_last_report()
         if report is None:
             return JSONResponse(status_code=202, content={"status": "scan_pending"})
         return report.as_dict()
 
     @router.post("/scan")
-    async def trigger_scan():
+    async def trigger_scan(request: Request):
+        """Trigger a fresh security scan. Admin only."""
         import asyncio
+        from cortana import auth as _auth
+        token = request.headers.get("X-Session-Token", "")
+        user = _auth.validate_token(token)
+        if not user or user.get("tier") != "admin":
+            return JSONResponse(status_code=403, content={"error": "Admin only"})
         report = await asyncio.to_thread(scanner.scan)
         return report.as_dict()
 

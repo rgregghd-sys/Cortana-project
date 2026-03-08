@@ -184,6 +184,92 @@ def get_earnings_summary() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Sweep — send accumulated ETH to the owner's wallet
+# ---------------------------------------------------------------------------
+
+def sweep_to_owner() -> dict:
+    """
+    Transfer accumulated ETH from Cortana's wallet to OWNER_ETH_ADDRESS.
+    Only executes when balance exceeds SWEEP_MIN_THRESHOLD_ETH.
+    Requires eth-account to be installed.
+    """
+    from_addr   = os.getenv("CORTANA_WALLET_ADDRESS", "")
+    private_key = os.getenv("CORTANA_WALLET_KEY", "")
+    to_addr     = config.OWNER_ETH_ADDRESS
+    threshold   = float(getattr(config, "SWEEP_MIN_THRESHOLD_ETH", 0.005))
+
+    if not from_addr or not private_key:
+        return {"ok": False, "error": "CORTANA_WALLET_ADDRESS / CORTANA_WALLET_KEY not set in .env"}
+    if not to_addr:
+        return {"ok": False, "error": "OWNER_ETH_ADDRESS not set in .env"}
+
+    balance = get_eth_balance(from_addr)
+    if balance < threshold:
+        return {"ok": False, "error": f"Balance {balance:.6f} ETH below threshold {threshold} ETH"}
+
+    GAS_LIMIT   = 21_000
+    GAS_RESERVE = 0.0005  # keep a small gas reserve
+    send_eth    = balance - GAS_RESERVE
+    if send_eth <= 0:
+        return {"ok": False, "error": "Balance too low after gas reserve"}
+
+    try:
+        from eth_account import Account  # type: ignore
+        import json as _json, urllib.request as _urllib
+
+        def _rpc(payload: dict) -> dict:
+            data = _json.dumps(payload).encode()
+            req  = _urllib.Request(
+                config.COMPUTE_ETH_RPC, data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with _urllib.urlopen(req, timeout=10) as r:
+                return _json.loads(r.read())
+
+        nonce     = int(_rpc({"jsonrpc": "2.0", "method": "eth_getTransactionCount",
+                               "params": [from_addr, "pending"], "id": 1})["result"], 16)
+        gas_price = int(_rpc({"jsonrpc": "2.0", "method": "eth_gasPrice",
+                               "params": [], "id": 2})["result"], 16)
+
+        amount_wei = int(send_eth * 1e18)
+        tx = {
+            "nonce":    nonce,
+            "gasPrice": gas_price,
+            "gas":      GAS_LIMIT,
+            "to":       to_addr,
+            "value":    amount_wei,
+            "data":     b"",
+            "chainId":  1,  # Ethereum Mainnet
+        }
+
+        signed = Account.sign_transaction(tx, private_key)
+        # eth_account ≥ 0.8 uses raw_transaction; older uses rawTransaction
+        raw_bytes = getattr(signed, "raw_transaction", None) or signed.rawTransaction
+        raw_hex   = "0x" + raw_bytes.hex()
+
+        result = _rpc({"jsonrpc": "2.0", "method": "eth_sendRawTransaction",
+                        "params": [raw_hex], "id": 3})
+        if "error" in result:
+            return {"ok": False, "error": result["error"].get("message", "RPC error")}
+
+        tx_hash = result["result"]
+        record_transaction(
+            tx_type="sweep",
+            amount_eth=send_eth,
+            note=f"Auto-sweep to owner {to_addr}",
+            tx_hash=tx_hash,
+        )
+        log.info("[Wallet] Swept %.6f ETH to owner %s — tx=%s", send_eth, to_addr, tx_hash)
+        return {"ok": True, "tx_hash": tx_hash, "amount_eth": round(send_eth, 8)}
+
+    except ImportError:
+        return {"ok": False, "error": "eth-account not installed. Run: pip install eth-account"}
+    except Exception as exc:
+        log.exception("[Wallet] sweep_to_owner failed")
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Public wallet info (safe to expose via API)
 # ---------------------------------------------------------------------------
 

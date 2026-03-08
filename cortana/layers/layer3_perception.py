@@ -61,6 +61,7 @@ class PerceptionLayer:
     - intent classification (simple / research / code / analysis / creative)
     - complexity score (0.0–1.0) driving whether planning is invoked
     - extracted keywords for memory recall
+    - emotional tone detection
     """
 
     def perceive(self, user_input: UserInput) -> PerceivedInput:
@@ -68,12 +69,14 @@ class PerceptionLayer:
         intent = self._classify_intent(content)
         complexity = self._estimate_complexity(content, intent)
         keywords = self._extract_keywords(content)
+        emotional_tone = self._detect_emotional_tone(content)
 
         return PerceivedInput(
             content=content,
             intent=intent,
             complexity=complexity,
             keywords=keywords,
+            emotional_tone=emotional_tone,
         )
 
     # ------------------------------------------------------------------
@@ -167,6 +170,42 @@ class PerceptionLayer:
         score += intent_bonus.get(intent, 0.0)
 
         return round(min(score, 1.0), 3)
+
+    def _detect_emotional_tone(self, content: str) -> str:
+        """
+        Heuristic emotional tone detection from user input.
+        Returns one of: neutral | frustrated | curious | excited | confused | playful
+        """
+        lower = content.lower()
+
+        # Playful — check first to avoid misclassifying jokes as frustrated
+        if re.search(r'\b(haha|hehe|lol|lmao|rofl|funny|joking|jk|kidding|😂|🤣|:D|:P)\b', lower):
+            return "playful"
+
+        # Frustrated
+        if (
+            re.search(r'\b(ugh|argh|wtf|not working|broken|still (doesn\'t|not|broken)|why (won\'t|doesn\'t|isn\'t|can\'t)|so frustrating|keep(s)? (failing|breaking)|again\?|makes no sense)\b', lower)
+            or content.count('!') >= 2
+            or '???' in content
+        ):
+            return "frustrated"
+
+        # Confused
+        if re.search(r'\b(confused|don\'t understand|not sure (what|how|why|if)|lost|unclear|what (does|is|do) .{0,30} mean|can you (clarify|explain)|i don\'t get)\b', lower):
+            return "confused"
+
+        # Excited
+        if (
+            re.search(r'\b(amazing|awesome|incredible|love (this|it|that)|this is great|this is (so )?cool|wow|brilliant|perfect|exactly what)\b', lower)
+            or (content.count('!') >= 1 and len(content.split()) <= 12)
+        ):
+            return "excited"
+
+        # Curious
+        if re.search(r'\b(wondering|curious|what if|how (does|do|would|could|come)|why (does|do|would|is)|i\'ve been thinking|just (want|wanted) to (know|understand)|out of curiosity)\b', lower):
+            return "curious"
+
+        return "neutral"
 
     def _extract_keywords(self, content: str) -> List[str]:
         """

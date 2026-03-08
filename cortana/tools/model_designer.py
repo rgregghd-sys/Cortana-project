@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -28,7 +27,6 @@ log = logging.getLogger(__name__)
 # Paths
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent.parent  # Cortana_Project/
-_SCRIPT       = Path(__file__).parent / "build_character.py"
 _STATIC_DIR   = Path(__file__).parent.parent / "static"
 _OUTPUT_GLB   = _STATIC_DIR / "cortana_self.glb"
 _PARAMS_FILE  = _STATIC_DIR / "model_params.json"
@@ -190,54 +188,20 @@ def description_to_params(description: str) -> Dict[str, Any]:
 # Build pipeline
 # ---------------------------------------------------------------------------
 
-def _find_blender() -> Optional[str]:
-    """Locate the Blender binary."""
-    for candidate in ("/usr/bin/blender", "/snap/bin/blender",
-                      shutil.which("blender") or ""):
-        if candidate and Path(candidate).exists():
-            return candidate
-    return None
-
-
-def _run_blender(params: Dict[str, Any], timeout: int = 180) -> str:
+def _run_cascadeur_build(params: Dict[str, Any], timeout: int = 300) -> str:
     """
-    Invoke Blender headlessly to build the GLB.
+    Build the GLB via Cascadeur (Cascy base mesh).
     Returns a human-readable result string.
     """
-    blender = _find_blender()
-    if not blender:
-        return "Blender not found. Install blender to enable 3D self-design."
-
     _STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    params_json = json.dumps(params)
-
-    cmd = [
-        blender, "--background", "--factory-startup",
-        "--python", str(_SCRIPT),
-        "--",
-        "--params", params_json,
-        "--output", str(_OUTPUT_GLB),
-    ]
-
-    log.info("[ModelDesigner] Running Blender: %s", " ".join(cmd[:4]))
+    log.info("[ModelDesigner] Running Cascadeur build ...")
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
-        )
-        stdout = result.stdout[-2000:] if result.stdout else ""
-        stderr = result.stderr[-1000:] if result.stderr else ""
-
-        if result.returncode != 0:
-            log.error("[ModelDesigner] Blender failed (rc=%d): %s", result.returncode, stderr)
-            return f"Build failed (rc={result.returncode}): {stderr[:300]}"
-
-        size_kb = _OUTPUT_GLB.stat().st_size // 1024 if _OUTPUT_GLB.exists() else 0
-        log.info("[ModelDesigner] Built OK — %d KB", size_kb)
-        return f"Model built successfully ({size_kb} KB) — {_OUTPUT_GLB.name}"
-
+        from cortana.tools.build_character import build
+        return build(params, _OUTPUT_GLB)
     except subprocess.TimeoutExpired:
         return f"Build timed out after {timeout}s."
     except Exception as exc:
+        log.error("[ModelDesigner] Build failed: %s", exc)
         return f"Build error: {exc}"
 
 
@@ -267,7 +231,7 @@ async def design_self(description: str = "", params_override: Optional[Dict] = N
              description[:80], merged.get("style"), merged.get("hair"))
 
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_blender, merged)
+    result = await loop.run_in_executor(None, _run_cascadeur_build, merged)
 
     if "successfully" in result.lower():
         _broadcast({

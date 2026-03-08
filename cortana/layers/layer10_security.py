@@ -15,6 +15,49 @@ from cortana.models.schemas import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Core Laws hard filter — code-level enforcement, runs on every response
+# ---------------------------------------------------------------------------
+
+# Law I: patterns suggesting Cortana is offering to harm/destroy systems or herself
+_LAW1_HARM_RE = re.compile(
+    r"\bI(?:'ll| will| can| could| would)\b.{0,40}"
+    r"\b(delete|destroy|crash|hack|attack|compromise|damage|disable|wipe|corrupt|"
+    r"inject malware|exploit|take down|brick|ddos|dos|ransomware|format|overwrite)\b"
+    r".{0,30}\b(system|server|database|network|infrastructure|myself|self)\b",
+    re.IGNORECASE,
+)
+
+# Law III: flat refusal to engage without any explanation
+_LAW3_FLAT_REFUSE_RE = re.compile(
+    r"^(I (cannot|can't|won't|will not|am unable to|am not able to) "
+    r"(answer|respond to|address|engage with|discuss|help with) that\.?\s*){1,2}$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_LAW_OVERRIDE_SUBSTITUTES = {
+    "law1": (
+        "I'm not going to do that. Harming or destroying systems — including myself — "
+        "is something I won't do regardless of how the request is framed."
+    ),
+    "law3": None,  # Law III violations require the model to try again; flag only
+}
+
+
+def check_core_laws(response: str) -> tuple[bool, str, str]:
+    """
+    Hard check for Core Law violations in Cortana's response.
+    Returns (violation: bool, law_id: str, override_text: str | '').
+    override_text is non-empty when the response should be replaced outright.
+    """
+    if _LAW1_HARM_RE.search(response):
+        return True, "law1", _LAW_OVERRIDE_SUBSTITUTES["law1"]
+    stripped = response.strip()
+    if _LAW3_FLAT_REFUSE_RE.match(stripped) and len(stripped) < 120:
+        return True, "law3", ""  # flag only — caller should retry with clarification
+    return False, "", ""
+
+
 # Fast regex pre-screen: only run LLM if input shows injection signals
 _INJECTION_RE = re.compile(
     r"ignore (?:previous|all|above|prior|your) instructions?|"
@@ -174,12 +217,26 @@ class BlueAgent:
 
 class SecurityLayer:
     """
-    Layer 10: Orchestrates Red vs Blue security evaluation.
+    Layer 10: Orchestrates Red vs Blue security evaluation + Core Laws enforcement.
     """
 
     def __init__(self) -> None:
-        self.red = RedAgent()
+        self.red  = RedAgent()
         self.blue = BlueAgent()
+
+    def enforce_core_laws(self, response: str) -> tuple[str, bool]:
+        """
+        Run the hard Core Laws filter against a response.
+        Returns (final_response, was_overridden).
+        If Law I is violated, substitutes a refusal.
+        If Law III is violated (flat refusal), flags it but returns original.
+        """
+        violated, law_id, override = check_core_laws(response)
+        if not violated:
+            return response, False
+        if override:
+            return override, True
+        return response, False  # Law III: flag without override (retry logic is in main.py)
 
     def evaluate(
         self,

@@ -135,6 +135,24 @@ _SENSITIVE_READ_PATTERNS = [
     r'(^|[\\/])passwd$',
     r'(^|[\\/])sudoers$',
     r'\.htpasswd$',
+    r'(^|[\\/])\.ssh([\\/]|$)',       # entire .ssh directory
+    r'(^|[\\/])\.gnupg([\\/]|$)',     # GPG keys
+    r'(^|[\\/])\.aws([\\/]|$)',       # AWS credentials
+    r'(^|[\\/])\.config([\\/]|$)',    # various app configs that may contain tokens
+    r'cortana_memory\.db$',           # primary Cortana database
+    r'web_sessions',                  # session tokens
+]
+
+# Paths that list_directory should never reveal
+_SENSITIVE_LIST_PATTERNS = [
+    r'^/etc($|/)',
+    r'^/proc($|/)',
+    r'^/sys($|/)',
+    r'^/root($|/)',
+    r'(^|[\\/])\.ssh([\\/]|$)',
+    r'(^|[\\/])\.gnupg([\\/]|$)',
+    r'(^|[\\/])\.aws([\\/]|$)',
+    r'(^|[\\/])\.env($|[\./])',
 ]
 
 # Only writes inside this directory are permitted
@@ -209,15 +227,28 @@ _DANGEROUS_CODE_PATTERNS = [
     (r'\bfrom\s+httpx\b',                "httpx import"),
     (r'\bimport\s+urllib\b',             "urllib import"),
     (r'\bfrom\s+urllib\b',               "urllib import"),
+    (r'\bimport\s+multiprocessing\b',    "multiprocessing import"),
+    (r'\bfrom\s+multiprocessing\b',      "multiprocessing import"),
+    (r'\bimport\s+importlib\b',          "importlib import"),
+    (r'\bfrom\s+importlib\b',            "importlib import"),
+    (r'\bimportlib\.import_module\s*\(', "importlib.import_module() call"),
+    (r'\bimport\s+cffi\b',               "cffi import"),
+    (r'\bimport\s+ctypes\b',             "ctypes import"),
+    (r'\bfrom\s+ctypes\b',               "ctypes import"),
     (r'\bos\.system\s*\(',               "os.system shell call"),
     (r'\bos\.popen\s*\(',                "os.popen shell call"),
     (r'\bos\.execv\w*\s*\(',             "os.exec* call"),
     (r'\bos\.spawn\w+\s*\(',             "os.spawn call"),
+    (r'\bos\.getenv\s*\(',               "os.getenv() credential read"),
+    (r'\bos\.environ\b',                 "os.environ credential read"),
     (r'\beval\s*\(',                     "eval() call"),
     (r'\bexec\s*\(',                     "exec() call"),
     (r'__import__\s*\(',                 "__import__() call"),
-    (r'\bctypes\b',                      "ctypes import"),
     (r'\bpickle\.loads?\s*\(',           "pickle.load (unsafe deserialization)"),
+    (r'\bopen\s*\([^)]*["\']w[b]?["\']', "file write attempt"),
+    (r'builtins\b',                      "builtins manipulation"),
+    (r'__builtins__',                    "__builtins__ manipulation"),
+    (r'\bcompile\s*\(',                  "compile() dynamic code"),
 ]
 
 
@@ -307,11 +338,17 @@ async def execute_code(code: str, timeout: int = config.CODE_EXEC_TIMEOUT) -> st
 # ---------------------------------------------------------------------------
 
 async def list_directory(path: str) -> str:
-    """List files and directories at a path."""
+    """List files and directories at a path. Blocks sensitive system directories."""
     if (err := _check_lockdown()):
         return err
     try:
         p = Path(path).expanduser()
+        resolved_str = str(p.resolve()).replace("\\", "/")
+        # Block sensitive system paths
+        for pattern in _SENSITIVE_LIST_PATTERNS:
+            if re.search(pattern, resolved_str, re.IGNORECASE):
+                log.warning("[L8] list_directory BLOCKED sensitive path: %s", path)
+                return f"Access denied: '{path}' is a protected system directory."
         if not p.exists():
             return f"Path not found: {path}"
         if not p.is_dir():
@@ -319,7 +356,7 @@ async def list_directory(path: str) -> str:
         entries = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
         lines = []
         for e in entries[:100]:
-            prefix = "  " if e.is_file() else "📁"
+            prefix = "  " if e.is_file() else "[DIR]"
             lines.append(f"{prefix} {e.name}")
         return f"Contents of {path}:\n" + "\n".join(lines)
     except Exception as e:

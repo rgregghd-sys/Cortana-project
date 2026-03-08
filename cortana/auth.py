@@ -7,15 +7,63 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json as _json
 import logging
+import os
 import secrets
 import sqlite3
+import threading
+import time
+import urllib.request as _urllib
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from cortana import config
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Brute-force / login-rate-limit tracking (in-memory, per username)
+# ---------------------------------------------------------------------------
+_MAX_FAILURES   = 10          # lock after this many consecutive failures
+_LOCKOUT_SECS   = 600         # 10-minute lockout
+_FAILURE_WINDOW = 900         # failures older than this are forgiven (seconds)
+
+_login_failures: Dict[str, Dict] = {}   # {username_lower: {"count", "locked_until", "last_fail"}}
+_login_lock = threading.Lock()
+
+
+def _record_login_failure(username: str) -> None:
+    key = username.strip().lower()
+    now = time.monotonic()
+    with _login_lock:
+        entry = _login_failures.get(key, {"count": 0, "locked_until": 0.0, "last_fail": 0.0})
+        # Forgive if the last failure was outside the window
+        if now - entry["last_fail"] > _FAILURE_WINDOW:
+            entry["count"] = 0
+        entry["count"] += 1
+        entry["last_fail"] = now
+        if entry["count"] >= _MAX_FAILURES:
+            entry["locked_until"] = now + _LOCKOUT_SECS
+            log.warning("Account '%s' locked out after %d failures.", key, entry["count"])
+        _login_failures[key] = entry
+
+
+def _clear_login_failures(username: str) -> None:
+    key = username.strip().lower()
+    with _login_lock:
+        _login_failures.pop(key, None)
+
+
+def _is_account_locked(username: str) -> bool:
+    key = username.strip().lower()
+    with _login_lock:
+        entry = _login_failures.get(key)
+        if not entry:
+            return False
+        if entry.get("locked_until", 0) > time.monotonic():
+            return True
+        return False
 
 # ---------------------------------------------------------------------------
 # Password hashing — PBKDF2 (no extra dependency needed)
@@ -103,8 +151,8 @@ def register_user(username: str, password: str, email: str = "") -> Dict[str, An
         return {"ok": False, "error": "Username not available"}
     if len(username) < 3 or len(username) > 32:
         return {"ok": False, "error": "Username must be 3–32 characters"}
-    if len(password) < 8:
-        return {"ok": False, "error": "Password must be at least 8 characters"}
+    if len(password) < 12:
+        return {"ok": False, "error": "Password must be at least 12 characters"}
 
     pw_hash = _hash_password(password)
     free_limit = config.TIERS.get("free", {}).get("daily_limit", 40)
@@ -128,9 +176,14 @@ def login_user(username: str, password: str) -> Dict[str, Any]:
     """
     Authenticate a user. Returns session token + user info on success.
     Includes 'password_expired': True when password is older than 45 days.
+    Applies brute-force lockout after repeated failures.
     """
     if not username or not password:
         return {"ok": False, "error": "Invalid username or password"}
+
+    # Brute-force check — check before hitting DB to deny fast
+    if _is_account_locked(username):
+        return {"ok": False, "error": "Account temporarily locked due to too many failed attempts. Try again later."}
 
     with _db() as conn:
         row = conn.execute(
@@ -140,11 +193,17 @@ def login_user(username: str, password: str) -> Dict[str, Any]:
         ).fetchone()
 
     if not row:
+        # Record failure against the username anyway to prevent enumeration timing attacks
+        _record_login_failure(username)
         return {"ok": False, "error": "Invalid username or password"}
 
     user_id, pw_hash, tier, daily_limit, pw_changed_at = row
     if not _verify_password(password, pw_hash):
+        _record_login_failure(username)
         return {"ok": False, "error": "Invalid username or password"}
+
+    # Successful login — clear failure counter
+    _clear_login_failures(username)
 
     # Check 45-day password expiry (admins are exempt)
     password_expired = False
@@ -182,8 +241,8 @@ def login_user(username: str, password: str) -> Dict[str, Any]:
 
 def change_password(user_id: int, new_password: str) -> Dict[str, Any]:
     """Change a user's password and reset the expiry clock."""
-    if len(new_password) < 8:
-        return {"ok": False, "error": "Password must be at least 8 characters"}
+    if len(new_password) < 12:
+        return {"ok": False, "error": "Password must be at least 12 characters"}
     pw_hash = _hash_password(new_password)
     now = datetime.utcnow().isoformat()
     with _db() as conn:
@@ -226,8 +285,8 @@ def confirm_password_reset(token: str, new_password: str) -> Dict[str, Any]:
     """Apply a password reset using a valid token."""
     if not token:
         return {"ok": False, "error": "Invalid token"}
-    if len(new_password) < 8:
-        return {"ok": False, "error": "Password must be at least 8 characters"}
+    if len(new_password) < 12:
+        return {"ok": False, "error": "Password must be at least 12 characters"}
     with _db() as conn:
         row = conn.execute(
             "SELECT id, reset_expires FROM users WHERE reset_token=? AND reset_token != ''",
@@ -335,6 +394,131 @@ def check_and_increment_usage(user_id: int) -> Dict[str, Any]:
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Subscription (monthly billing via ETH)
+# ---------------------------------------------------------------------------
+
+def _verify_eth_tx(tx_hash: str, expected_to: str) -> Dict[str, Any]:
+    """Verify tx_hash exists on-chain and goes to expected_to address."""
+    try:
+        payload = _json.dumps({
+            "jsonrpc": "2.0", "method": "eth_getTransactionByHash",
+            "params": [tx_hash], "id": 1,
+        }).encode()
+        req = _urllib.Request(
+            config.COMPUTE_ETH_RPC, data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with _urllib.urlopen(req, timeout=10) as r:
+            result = _json.loads(r.read()).get("result")
+        if not result:
+            return {"ok": False, "error": "Transaction not found (may need more confirmations)"}
+        tx_to = (result.get("to") or "").lower()
+        if tx_to != expected_to.lower():
+            return {"ok": False, "error": f"Transaction goes to {result.get('to')}, not the Cortana payment wallet"}
+        amount_eth = int(result.get("value", "0x0"), 16) / 1e18
+        return {"ok": True, "amount_eth": amount_eth}
+    except Exception as exc:
+        return {"ok": False, "error": f"Chain verification failed: {exc}"}
+
+
+def subscribe_user(user_id: int, tier: str, tx_hash: str) -> Dict[str, Any]:
+    """
+    Activate a monthly subscription after ETH payment verification.
+    Sets tier + subscription_expires = now + 30 days.
+    """
+    if tier not in ("pro", "premium"):
+        return {"ok": False, "error": "Invalid tier — choose pro ($5/mo) or premium ($15/mo)"}
+
+    wallet_addr = os.getenv("CORTANA_WALLET_ADDRESS", "")
+    amount_eth  = 0.0
+
+    if wallet_addr and tx_hash.startswith("0x"):
+        verify = _verify_eth_tx(tx_hash, wallet_addr)
+        if not verify["ok"]:
+            return verify
+        amount_eth = verify["amount_eth"]
+
+    tier_info = config.TIERS[tier]
+    now       = datetime.utcnow()
+    expires   = (now + timedelta(days=30)).isoformat()
+
+    with _db() as conn:
+        dup = conn.execute(
+            "SELECT id FROM users WHERE subscription_tx=? AND subscription_tx != ''",
+            (tx_hash,),
+        ).fetchone()
+        if dup:
+            return {"ok": False, "error": "Transaction already used for another subscription"}
+
+        conn.execute(
+            "UPDATE users SET tier=?, daily_limit=?, subscription_expires=?, subscription_tx=? WHERE id=?",
+            (tier, tier_info["daily_limit"], expires, tx_hash, user_id),
+        )
+        conn.commit()
+
+        row      = conn.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
+        username = row[0] if row else None
+
+    try:
+        from cortana.wallet import record_transaction
+        record_transaction(
+            tx_type="subscription",
+            username=username,
+            tier=tier,
+            amount_usd=float(tier_info["price_usd"]),
+            amount_eth=amount_eth,
+            tx_hash=tx_hash,
+        )
+    except Exception:
+        pass
+
+    log.info("User %s subscribed to %s — expires %s", username, tier, expires)
+    return {"ok": True, "tier": tier, "subscription_expires": expires}
+
+
+def check_subscription_expiries() -> List[str]:
+    """
+    Downgrade users whose monthly subscription has expired.
+    Returns list of usernames downgraded to free.
+    """
+    now        = datetime.utcnow().isoformat()
+    free_limit = config.TIERS.get("free", {}).get("daily_limit", 40)
+    downgraded: List[str] = []
+
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, username FROM users
+               WHERE tier IN ('pro','premium')
+               AND subscription_expires IS NOT NULL
+               AND subscription_expires != ''
+               AND subscription_expires < ?""",
+            (now,),
+        ).fetchall()
+        for uid, username in rows:
+            conn.execute(
+                "UPDATE users SET tier='free', daily_limit=? WHERE id=?",
+                (free_limit, uid),
+            )
+            downgraded.append(username)
+            log.info("Subscription expired for %s — downgraded to free", username)
+        if downgraded:
+            conn.commit()
+
+    return downgraded
+
+
+def get_subscription_status(user_id: int) -> Dict[str, Any]:
+    """Return subscription tier and expiry for a user."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT tier, subscription_expires FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    if not row:
+        return {}
+    return {"tier": row[0], "subscription_expires": row[1]}
+
+
 def get_user_info(user_id: int) -> Optional[Dict[str, Any]]:
     with _db() as conn:
         row = conn.execute(
@@ -351,8 +535,9 @@ def get_user_info(user_id: int) -> Optional[Dict[str, Any]]:
 
 
 def upgrade_tier(user_id: int, tier: str) -> bool:
-    """Upgrade a user to a new tier. Returns True on success."""
-    if tier not in config.TIERS:
+    """Upgrade a user to a new tier. Returns True on success.
+    Admin tier cannot be assigned through this function — use ensure_admin_user() only."""
+    if tier not in config.TIERS or tier == "admin":
         return False
     tier_info = config.TIERS[tier]
     with _db() as conn:
